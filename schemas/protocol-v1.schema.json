@@ -1,0 +1,2310 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:astra:credential-broker:protocol:1",
+  "title": "Astra Credential Broker protocol v1 request",
+  "description": "Structural contract generated from strict C# DTOs. UTF-8 byte limits, authorization, crypto allowlists, revisions, leases and state transitions are additionally enforced by the broker; see docs/protocol.md.",
+  "$defs": {
+    "Greeting": {
+      "type": "object",
+      "properties": {
+        "protocolVersion": {
+          "type": "integer"
+        },
+        "vaultId": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "string"
+        },
+        "nonce": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "vaultId",
+        "generation",
+        "nonce"
+      ],
+      "additionalProperties": false
+    },
+    "Hello": {
+      "type": "object",
+      "properties": {
+        "protocolVersion": {
+          "type": "integer"
+        },
+        "clientId": {
+          "type": "string"
+        },
+        "instanceId": {
+          "type": "string"
+        },
+        "clientNonce": {
+          "type": "string"
+        },
+        "proof": {
+          "type": "string"
+        },
+        "management": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "clientId",
+        "instanceId",
+        "clientNonce",
+        "proof"
+      ],
+      "additionalProperties": false
+    },
+    "Welcome": {
+      "type": "object",
+      "properties": {
+        "proof": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "proof"
+      ],
+      "additionalProperties": false
+    },
+    "RpcResponse": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": true,
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "ok",
+        "result",
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    "ServiceStatus": {
+      "type": "object",
+      "properties": {
+        "serviceStatus": {
+          "type": "string"
+        },
+        "vaultId": {
+          "type": "string"
+        },
+        "storageVersion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ownership": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "string"
+        },
+        "sessions": {
+          "type": "integer"
+        },
+        "errorCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "serviceStatus",
+        "vaultId",
+        "storageVersion",
+        "ownership",
+        "generation",
+        "sessions",
+        "errorCode"
+      ],
+      "additionalProperties": false
+    },
+    "CreateCredential": {
+      "type": "object",
+      "properties": {
+        "credentialId": {
+          "type": "string"
+        },
+        "operationId": {
+          "type": "string"
+        },
+        "contentType": {
+          "type": "string"
+        },
+        "payloadFormatVersion": {
+          "type": "integer"
+        },
+        "payload": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "coordinationKey": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "credentialId",
+        "operationId",
+        "contentType",
+        "payloadFormatVersion",
+        "payload",
+        "metadata"
+      ],
+      "additionalProperties": false
+    },
+    "ListCredentials": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "default": 50
+        },
+        "afterCredentialId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "createdByClientId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "lastUpdatedByClientId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "metadataEquals": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "Credential": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "object",
+          "properties": {
+            "credentialId": {
+              "type": "string"
+            },
+            "revision": {
+              "type": "string"
+            },
+            "createdByClientId": {
+              "type": "string"
+            },
+            "lastUpdatedByClientId": {
+              "type": "string"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "contentType": {
+              "type": "string"
+            },
+            "payloadFormatVersion": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "credentialId",
+            "revision",
+            "createdByClientId",
+            "lastUpdatedByClientId",
+            "metadata",
+            "contentType",
+            "payloadFormatVersion"
+          ],
+          "additionalProperties": false
+        },
+        "payload": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "description",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    "CredentialPage": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "credentialId": {
+                "type": "string"
+              },
+              "revision": {
+                "type": "string"
+              },
+              "createdByClientId": {
+                "type": "string"
+              },
+              "lastUpdatedByClientId": {
+                "type": "string"
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "contentType": {
+                "type": "string"
+              },
+              "payloadFormatVersion": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "credentialId",
+              "revision",
+              "createdByClientId",
+              "lastUpdatedByClientId",
+              "metadata",
+              "contentType",
+              "payloadFormatVersion"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "nextCursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "items",
+        "nextCursor"
+      ],
+      "additionalProperties": false
+    },
+    "BeginUpdate": {
+      "type": "object",
+      "properties": {
+        "credentialId": {
+          "type": "string"
+        },
+        "observedRevision": {
+          "type": "string"
+        },
+        "operationId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "credentialId",
+        "observedRevision",
+        "operationId"
+      ],
+      "additionalProperties": false
+    },
+    "BeginResult": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "credential": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "description": {
+              "type": "object",
+              "properties": {
+                "credentialId": {
+                  "type": "string"
+                },
+                "revision": {
+                  "type": "string"
+                },
+                "createdByClientId": {
+                  "type": "string"
+                },
+                "lastUpdatedByClientId": {
+                  "type": "string"
+                },
+                "metadata": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "contentType": {
+                  "type": "string"
+                },
+                "payloadFormatVersion": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "credentialId",
+                "revision",
+                "createdByClientId",
+                "lastUpdatedByClientId",
+                "metadata",
+                "contentType",
+                "payloadFormatVersion"
+              ],
+              "additionalProperties": false
+            },
+            "payload": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "description",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        "operation": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "operationId": {
+              "type": "string"
+            },
+            "credentialId": {
+              "type": "string"
+            },
+            "clientId": {
+              "type": "string"
+            },
+            "instanceId": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "leaseId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "fence": {
+              "type": "string"
+            },
+            "generation": {
+              "type": "string"
+            },
+            "baseRevision": {
+              "type": "string"
+            },
+            "grantedAt": {
+              "type": "integer"
+            },
+            "expiresAt": {
+              "type": "integer"
+            },
+            "hardDeadline": {
+              "type": "integer"
+            },
+            "resultRevision": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "requestHash": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "failureCode": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "retryable": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "default": null
+            },
+            "upstreamOutcome": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "operationId",
+            "credentialId",
+            "clientId",
+            "instanceId",
+            "status",
+            "leaseId",
+            "fence",
+            "generation",
+            "baseRevision",
+            "grantedAt",
+            "expiresAt",
+            "hardDeadline"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "status",
+        "credential",
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "LeaseRef": {
+      "type": "object",
+      "properties": {
+        "operationId": {
+          "type": "string"
+        },
+        "leaseId": {
+          "type": "string"
+        },
+        "fence": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "string"
+        },
+        "baseRevision": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operationId",
+        "leaseId",
+        "fence",
+        "generation",
+        "baseRevision"
+      ],
+      "additionalProperties": false
+    },
+    "CommitUpdate": {
+      "type": "object",
+      "properties": {
+        "lease": {
+          "type": "object",
+          "properties": {
+            "operationId": {
+              "type": "string"
+            },
+            "leaseId": {
+              "type": "string"
+            },
+            "fence": {
+              "type": "string"
+            },
+            "generation": {
+              "type": "string"
+            },
+            "baseRevision": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "operationId",
+            "leaseId",
+            "fence",
+            "generation",
+            "baseRevision"
+          ],
+          "additionalProperties": false
+        },
+        "payload": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "contentType": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "payloadFormatVersion": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": null
+        },
+        "setMetadata": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": null
+        },
+        "removeKeys": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "default": null
+        },
+        "delete": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "lease"
+      ],
+      "additionalProperties": false
+    },
+    "AbortUpdate": {
+      "type": "object",
+      "properties": {
+        "lease": {
+          "type": "object",
+          "properties": {
+            "operationId": {
+              "type": "string"
+            },
+            "leaseId": {
+              "type": "string"
+            },
+            "fence": {
+              "type": "string"
+            },
+            "generation": {
+              "type": "string"
+            },
+            "baseRevision": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "operationId",
+            "leaseId",
+            "fence",
+            "generation",
+            "baseRevision"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "string"
+        },
+        "failureCode": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "upstreamOutcome": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "lease",
+        "result",
+        "failureCode",
+        "retryable",
+        "upstreamOutcome"
+      ],
+      "additionalProperties": false
+    },
+    "Operation": {
+      "type": "object",
+      "properties": {
+        "operationId": {
+          "type": "string"
+        },
+        "credentialId": {
+          "type": "string"
+        },
+        "clientId": {
+          "type": "string"
+        },
+        "instanceId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "leaseId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fence": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "string"
+        },
+        "baseRevision": {
+          "type": "string"
+        },
+        "grantedAt": {
+          "type": "integer"
+        },
+        "expiresAt": {
+          "type": "integer"
+        },
+        "hardDeadline": {
+          "type": "integer"
+        },
+        "resultRevision": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "requestHash": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "failureCode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "retryable": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "upstreamOutcome": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "operationId",
+        "credentialId",
+        "clientId",
+        "instanceId",
+        "status",
+        "leaseId",
+        "fence",
+        "generation",
+        "baseRevision",
+        "grantedAt",
+        "expiresAt",
+        "hardDeadline"
+      ],
+      "additionalProperties": false
+    },
+    "EventPage": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "credentialId": {
+                "type": "string"
+              },
+              "revision": {
+                "type": "string"
+              },
+              "eventSequence": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "credentialId",
+              "revision",
+              "eventSequence",
+              "kind"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "nextCursor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "items",
+        "nextCursor"
+      ],
+      "additionalProperties": false
+    },
+    "EventsRequest": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "type": "string",
+          "default": "0"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "WatchEventsRequest": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "type": "string",
+          "default": "0"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 100
+        },
+        "waitMilliseconds": {
+          "type": "integer",
+          "default": 5000
+        }
+      },
+      "additionalProperties": false
+    },
+    "IdRequest": {
+      "type": "object",
+      "properties": {
+        "credentialId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "credentialId"
+      ],
+      "additionalProperties": false
+    },
+    "OperationRequest": {
+      "type": "object",
+      "properties": {
+        "operationId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operationId"
+      ],
+      "additionalProperties": false
+    },
+    "RegisterClient": {
+      "type": "object",
+      "properties": {
+        "clientId": {
+          "type": "string"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "credentialIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allCredentials": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "clientId",
+        "scopes",
+        "credentialIds"
+      ],
+      "additionalProperties": false
+    },
+    "RegisteredClient": {
+      "type": "object",
+      "properties": {
+        "clientId": {
+          "type": "string"
+        },
+        "accessToken": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "clientId",
+        "accessToken"
+      ],
+      "additionalProperties": false
+    },
+    "ClientIdRequest": {
+      "type": "object",
+      "properties": {
+        "clientId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "clientId"
+      ],
+      "additionalProperties": false
+    },
+    "InitializeRequest": {
+      "type": "object",
+      "properties": {
+        "operationId": {
+          "type": "string"
+        },
+        "sourceWatermark": {
+          "type": "string"
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "credentialId": {
+                "type": "string"
+              },
+              "contentType": {
+                "type": "string"
+              },
+              "payloadFormatVersion": {
+                "type": "integer"
+              },
+              "payload": {
+                "type": "string"
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "coordinationKey": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "credentialId",
+              "contentType",
+              "payloadFormatVersion",
+              "payload",
+              "metadata"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "operationId",
+        "sourceWatermark",
+        "records"
+      ],
+      "additionalProperties": false
+    },
+    "InitializeResult": {
+      "type": "object",
+      "properties": {
+        "storageVersion": {
+          "type": "string"
+        },
+        "attemptId": {
+          "type": "string"
+        },
+        "keyId": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "migrationKey": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "storageVersion",
+        "attemptId",
+        "keyId",
+        "state",
+        "migrationKey"
+      ],
+      "additionalProperties": false
+    },
+    "TransferPackage": {
+      "type": "object",
+      "properties": {
+        "header": {
+          "type": "object",
+          "properties": {
+            "format": {
+              "type": "string"
+            },
+            "version": {
+              "type": "integer"
+            },
+            "vaultId": {
+              "type": "string"
+            },
+            "storageVersion": {
+              "type": "string"
+            },
+            "attemptId": {
+              "type": "string"
+            },
+            "transferId": {
+              "type": "string"
+            },
+            "keyId": {
+              "type": "string"
+            },
+            "cipher": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "nonce": {
+                  "type": "string"
+                },
+                "tagLength": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "name",
+                "nonce",
+                "tagLength"
+              ],
+              "additionalProperties": false
+            },
+            "kdf": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "salt": {
+                  "type": "string"
+                },
+                "info": {
+                  "type": "string"
+                },
+                "outputLength": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "name",
+                "salt",
+                "info",
+                "outputLength"
+              ],
+              "additionalProperties": false
+            },
+            "payloadSchemaVersion": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "format",
+            "version",
+            "vaultId",
+            "storageVersion",
+            "attemptId",
+            "transferId",
+            "keyId",
+            "cipher",
+            "kdf",
+            "payloadSchemaVersion"
+          ],
+          "additionalProperties": false
+        },
+        "ciphertext": {
+          "type": "string"
+        },
+        "tag": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "header",
+        "ciphertext",
+        "tag"
+      ],
+      "additionalProperties": false
+    },
+    "TransferSnapshot": {
+      "type": "object",
+      "properties": {
+        "vaultId": {
+          "type": "string"
+        },
+        "storageVersion": {
+          "type": "string"
+        },
+        "attemptId": {
+          "type": "string"
+        },
+        "keyId": {
+          "type": "string"
+        },
+        "masterKey": {
+          "type": "string"
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "object",
+                "properties": {
+                  "credentialId": {
+                    "type": "string"
+                  },
+                  "revision": {
+                    "type": "string"
+                  },
+                  "createdByClientId": {
+                    "type": "string"
+                  },
+                  "lastUpdatedByClientId": {
+                    "type": "string"
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "contentType": {
+                    "type": "string"
+                  },
+                  "payloadFormatVersion": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "credentialId",
+                  "revision",
+                  "createdByClientId",
+                  "lastUpdatedByClientId",
+                  "metadata",
+                  "contentType",
+                  "payloadFormatVersion"
+                ],
+                "additionalProperties": false
+              },
+              "payload": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "description",
+              "payload"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "vaultId",
+        "storageVersion",
+        "attemptId",
+        "keyId",
+        "masterKey",
+        "records"
+      ],
+      "additionalProperties": false
+    },
+    "VersionManifest": {
+      "type": "object",
+      "properties": {
+        "formatVersion": {
+          "type": "integer"
+        },
+        "vaultId": {
+          "type": "string"
+        },
+        "storageVersion": {
+          "type": "string"
+        },
+        "attemptId": {
+          "type": "string"
+        },
+        "keyId": {
+          "type": "string"
+        },
+        "migrationHash": {
+          "type": "string"
+        },
+        "keyCheck": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "nonce": {
+              "type": "string"
+            },
+            "ciphertext": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "nonce",
+            "ciphertext",
+            "tag"
+          ],
+          "additionalProperties": false,
+          "default": null
+        }
+      },
+      "required": [
+        "formatVersion",
+        "vaultId",
+        "storageVersion",
+        "attemptId",
+        "keyId",
+        "migrationHash"
+      ],
+      "additionalProperties": false
+    },
+    "VaultManifest": {
+      "type": "object",
+      "properties": {
+        "layoutVersion": {
+          "type": "integer"
+        },
+        "vaultId": {
+          "type": "string"
+        },
+        "directoryIdentity": {
+          "type": "string"
+        },
+        "ownerSid": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "layoutVersion",
+        "vaultId",
+        "directoryIdentity",
+        "ownerSid"
+      ],
+      "additionalProperties": false
+    },
+    "ReadyRequest": {
+      "type": "object",
+      "properties": {
+        "operationId": {
+          "type": "string"
+        },
+        "sourceWatermark": {
+          "type": "string"
+        },
+        "challengeId": {
+          "type": "string"
+        },
+        "proof": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operationId",
+        "sourceWatermark",
+        "challengeId",
+        "proof"
+      ],
+      "additionalProperties": false
+    },
+    "HandoffRequest": {
+      "type": "object",
+      "properties": {
+        "operationId": {
+          "type": "string"
+        },
+        "sourceWatermark": {
+          "type": "string"
+        },
+        "requiredClientIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "operationId",
+        "sourceWatermark",
+        "requiredClientIds"
+      ],
+      "additionalProperties": false
+    },
+    "ProofChallenge": {
+      "type": "object",
+      "properties": {
+        "challengeId": {
+          "type": "string"
+        },
+        "nonce": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "challengeId",
+        "nonce",
+        "expiresAt"
+      ],
+      "additionalProperties": false
+    },
+    "UnlockRequest": {
+      "type": "object",
+      "properties": {
+        "masterKey": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "masterKey"
+      ],
+      "additionalProperties": false
+    },
+    "ValidateMigration": {
+      "type": "object",
+      "properties": {
+        "migrationKey": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "migrationKey"
+      ],
+      "additionalProperties": false
+    },
+    "MigrationValidation": {
+      "type": "object",
+      "properties": {
+        "vaultId": {
+          "type": "string"
+        },
+        "storageVersion": {
+          "type": "string"
+        },
+        "attemptId": {
+          "type": "string"
+        },
+        "keyId": {
+          "type": "string"
+        },
+        "recordCount": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "vaultId",
+        "storageVersion",
+        "attemptId",
+        "keyId",
+        "recordCount"
+      ],
+      "additionalProperties": false
+    },
+    "PreparedResult": {
+      "type": "object",
+      "properties": {
+        "storageVersion": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "storageVersion",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "HandoffResult": {
+      "type": "object",
+      "properties": {
+        "storageVersion": {
+          "type": "string"
+        },
+        "ownership": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "storageVersion",
+        "ownership"
+      ],
+      "additionalProperties": false
+    },
+    "ComponentManifest": {
+      "type": "object",
+      "properties": {
+        "component": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "rid": {
+          "type": "string"
+        },
+        "protocolMin": {
+          "type": "integer"
+        },
+        "protocolMax": {
+          "type": "integer"
+        },
+        "storageMin": {
+          "type": "integer"
+        },
+        "storageMax": {
+          "type": "integer"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "size": {
+                "type": "integer"
+              },
+              "sha256": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "size",
+              "sha256"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "component",
+        "version",
+        "rid",
+        "protocolMin",
+        "protocolMax",
+        "storageMin",
+        "storageMax",
+        "files"
+      ],
+      "additionalProperties": false
+    },
+    "Installation": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "directory": {
+          "type": "string"
+        },
+        "manifestHash": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "directory",
+        "manifestHash"
+      ],
+      "additionalProperties": false
+    },
+    "VaultRegistration": {
+      "type": "object",
+      "properties": {
+        "vaultId": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        },
+        "directoryIdentity": {
+          "type": "string"
+        },
+        "ownerSid": {
+          "type": "string"
+        },
+        "supervision": {
+          "type": "string",
+          "default": "detached-process"
+        }
+      },
+      "required": [
+        "vaultId",
+        "root",
+        "directoryIdentity",
+        "ownerSid"
+      ],
+      "additionalProperties": false
+    },
+    "InstallJournal": {
+      "type": "object",
+      "properties": {
+        "previous": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "version": {
+              "type": "string"
+            },
+            "directory": {
+              "type": "string"
+            },
+            "manifestHash": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "version",
+            "directory",
+            "manifestHash"
+          ],
+          "additionalProperties": false
+        },
+        "candidate": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "version": {
+              "type": "string"
+            },
+            "directory": {
+              "type": "string"
+            },
+            "manifestHash": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "version",
+            "directory",
+            "manifestHash"
+          ],
+          "additionalProperties": false
+        },
+        "phase": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "previous",
+        "candidate",
+        "phase"
+      ],
+      "additionalProperties": false
+    },
+    "InstallationStatus": {
+      "type": "object",
+      "properties": {
+        "installState": {
+          "type": "string"
+        },
+        "installation": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "version": {
+              "type": "string"
+            },
+            "directory": {
+              "type": "string"
+            },
+            "manifestHash": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "version",
+            "directory",
+            "manifestHash"
+          ],
+          "additionalProperties": false
+        },
+        "errorCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "installState",
+        "installation",
+        "errorCode"
+      ],
+      "additionalProperties": false
+    },
+    "RuntimeEndpoint": {
+      "type": "object",
+      "properties": {
+        "pid": {
+          "type": "integer"
+        },
+        "processStartTime": {
+          "type": "integer"
+        },
+        "generation": {
+          "type": "string"
+        },
+        "pipeName": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pid",
+        "processStartTime",
+        "generation",
+        "pipeName",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "Empty": {
+      "type": "object",
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "status"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "heartbeat"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "disconnect"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "listCredentials"
+        },
+        "params": {
+          "$ref": "#/$defs/ListCredentials"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "getCredential"
+        },
+        "params": {
+          "$ref": "#/$defs/IdRequest"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "createCredential"
+        },
+        "params": {
+          "$ref": "#/$defs/CreateCredential"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "beginUpdate"
+        },
+        "params": {
+          "$ref": "#/$defs/BeginUpdate"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "markUpdateStarted"
+        },
+        "params": {
+          "$ref": "#/$defs/LeaseRef"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "renewUpdate"
+        },
+        "params": {
+          "$ref": "#/$defs/LeaseRef"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "commitUpdate"
+        },
+        "params": {
+          "$ref": "#/$defs/CommitUpdate"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "abortUpdate"
+        },
+        "params": {
+          "$ref": "#/$defs/AbortUpdate"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "getOperation"
+        },
+        "params": {
+          "$ref": "#/$defs/OperationRequest"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "getEvents"
+        },
+        "params": {
+          "$ref": "#/$defs/EventsRequest"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "watchEvents"
+        },
+        "params": {
+          "$ref": "#/$defs/WatchEventsRequest"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "initialize"
+        },
+        "params": {
+          "$ref": "#/$defs/InitializeRequest"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "recoverDelivery"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "acknowledgeDelivery"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "validateMigration"
+        },
+        "params": {
+          "$ref": "#/$defs/ValidateMigration"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "prepareChallenge"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "prepareClient"
+        },
+        "params": {
+          "$ref": "#/$defs/ReadyRequest"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "handoff"
+        },
+        "params": {
+          "$ref": "#/$defs/HandoffRequest"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "registerClient"
+        },
+        "params": {
+          "$ref": "#/$defs/RegisterClient"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "revokeClient"
+        },
+        "params": {
+          "$ref": "#/$defs/ClientIdRequest"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "unlock"
+        },
+        "params": {
+          "$ref": "#/$defs/UnlockRequest"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "stop"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      }
+    }
+  ]
+}

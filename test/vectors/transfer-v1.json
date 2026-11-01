@@ -1,0 +1,53 @@
+{
+  "migrationKey": "acm1_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "snapshot": {
+    "vaultId": "vector-vault",
+    "storageVersion": "vector-version",
+    "attemptId": "vector-attempt",
+    "keyId": "vector-key",
+    "masterKey": "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI",
+    "records": [
+      {
+        "description": {
+          "credentialId": "opaque-example",
+          "revision": "1",
+          "createdByClientId": "third-party",
+          "lastUpdatedByClientId": "third-party",
+          "metadata": {
+            "\u754c": "\u2028\u2029\ud83d\ude00<>&",
+            "supportsInference": "true",
+            "supportsUsage": "false"
+          },
+          "contentType": "application/third-party",
+          "payloadFormatVersion": 1
+        },
+        "payload": "AP8BgA"
+      }
+    ]
+  },
+  "package": {
+    "header": {
+      "format": "astraconductor.credential-transfer",
+      "version": 1,
+      "vaultId": "vector-vault",
+      "storageVersion": "vector-version",
+      "attemptId": "vector-attempt",
+      "transferId": "vector-transfer",
+      "keyId": "vector-key",
+      "cipher": {
+        "name": "AES-256-GCM",
+        "nonce": "CgsMDQ4PEBESExQV",
+        "tagLength": 128
+      },
+      "kdf": {
+        "name": "HKDF-SHA-256",
+        "salt": "__79_Pv6-fj39vX08_Lx8O_u7ezr6uno5-bl5OPi4eA",
+        "info": "WyJhc3RyYWNvbmR1Y3Rvci5jcmVkZW50aWFsLXRyYW5zZmVyLnYxIiwidmVjdG9yLXZhdWx0IiwidmVjdG9yLXZlcnNpb24iLCJ2ZWN0b3ItYXR0ZW1wdCIsInZlY3Rvci10cmFuc2ZlciJd",
+        "outputLength": 32
+      },
+      "payloadSchemaVersion": 1
+    },
+    "ciphertext": "4zZaQUHWjNhnVFj6P96lWzE5QvQuKuHlkT5rGFLGfUhylNO3riuNZUvphJgTNo0904De-XEHm6Ye99st-FtB4R0INfLjnAxc6nUWHJhHW2QqUZbwIVtckbD3LgI8r263xpXTS07kcK-_5kzX5YOPuwFq9OYeGq_FWo4OL3JdLI-Tex_dwUG1W6Caz9AawP5hXNwLmcHUCcVEGCpfHkBPBKQe-frTV8fUxzPnUEcLAKr-TGoqZZ5UBI7azg7FYA5aKhKDatMGabW2cpTeOVZlimnNZWlmYjYUwsEy5jn2fCrkPJGJ73579vlgfpATVKR6pYQN8T2evXLebUF478B5B1tLHl6b4nI6qrgagJkZ-Rovs0R4Ar85sJO-MzfsG7s2n67Mp_F2ehnLg2RBwQBuGOZ0GNpTKgwcISx1HaV-IQnHKOiPNb_qtiiqsfy_OdVzob_iUMuBJdf5KE0lDvnATS5OcOqDcCsaKnTy1S5GlHjDHIAkmghJaeSn2VxFtouYbLfJti5jEncB_r_wqg08ttlUUxtAfs4osxSJGnGlgsir2FF5UAR8OMdjLJVIeqXlk0M6VkORIdF6Kn5BxP8DY9118HzjhAliAjI2Ts5quZK7nlcWV_Y8-7zeSapyM8qmyQBCgfBuXw",
+    "tag": "Lz64Ro3G6pL6Jx-eF5OiHw"
+  }
+}
