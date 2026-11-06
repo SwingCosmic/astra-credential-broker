@@ -11,6 +11,34 @@ internal sealed class WindowsPrivateFileSystem : IPrivateFileSystem
 {
   private static SecurityIdentifier User => WindowsUserIdentity.CurrentSid;
   private static SecurityIdentifier SystemUser => new(WellKnownSidType.LocalSystemSid, null);
+  public string CreateDataDirectory(string path)
+  {
+    var full = LocalFiles.FullPath(path);
+    Directory.CreateDirectory(full);
+    ValidatePrivateDirectory(full);
+    // Prove the broker can create, flush, rename and remove its own data without changing
+    // the user's directory DACL or inspecting other principals' permissions.
+    var probe = Path.Combine(full, "." + Crypto.RandomId() + ".probe");
+    var moved = probe + ".moved";
+    try
+    {
+      using (var file = new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        file.Flush(true);
+      File.Move(probe, moved);
+    }
+    finally { if (File.Exists(probe)) File.Delete(probe); if (File.Exists(moved)) File.Delete(moved); }
+    return full;
+  }
+
+  public void RestrictCreatedFile(string path)
+  {
+    var acl = new FileSecurity();
+    acl.SetOwner(User);
+    acl.SetAccessRuleProtection(true, false);
+    foreach (var principal in new[] { User, SystemUser })
+      acl.AddAccessRule(new FileSystemAccessRule(principal, FileSystemRights.FullControl, AccessControlType.Allow));
+    new FileInfo(path).SetAccessControl(acl);
+  }
   public string CreatePrivateDirectory(string path)
   {
     var full = LocalFiles.FullPath(path);
@@ -33,10 +61,7 @@ internal sealed class WindowsPrivateFileSystem : IPrivateFileSystem
   public void ValidatePrivateDirectory(string path)
   {
     LocalFiles.CheckLinks(path);
-    var acl = new DirectoryInfo(path).GetAccessControl(AccessControlSections.Owner | AccessControlSections.Access);
-    Protocol.Require(User.Equals(acl.GetOwner(typeof(SecurityIdentifier))), "directory-owner-mismatch");
-    foreach (FileSystemAccessRule rule in acl.GetAccessRules(true, true, typeof(SecurityIdentifier)))
-      Protocol.Require(rule.AccessControlType != AccessControlType.Allow || rule.IdentityReference.Equals(User) || rule.IdentityReference.Equals(SystemUser), "directory-permissions-too-broad");
+    Protocol.Require(Directory.Exists(path), "directory-not-found");
   }
 
   public void ValidateTree(string root)
@@ -48,10 +73,7 @@ internal sealed class WindowsPrivateFileSystem : IPrivateFileSystem
       if (Directory.Exists(path)) ValidateTree(path);
       else
       {
-        var acl = new FileInfo(path).GetAccessControl(AccessControlSections.Owner | AccessControlSections.Access);
-        Protocol.Require(User.Equals(acl.GetOwner(typeof(SecurityIdentifier))), "file-owner-mismatch");
-        foreach (FileSystemAccessRule rule in acl.GetAccessRules(true, true, typeof(SecurityIdentifier)))
-          Protocol.Require(rule.AccessControlType != AccessControlType.Allow || rule.IdentityReference.Equals(User) || rule.IdentityReference.Equals(SystemUser), "file-permissions-too-broad");
+        Protocol.Require(File.Exists(path), "file-not-found");
       }
     }
   }

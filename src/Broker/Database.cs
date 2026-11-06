@@ -4,10 +4,19 @@ namespace Astra.Credentials;
 
 public sealed class Database : IDisposable
 {
+  private readonly IPrivateFileSystem? files;
+  private readonly HashSet<string> pendingSidecars;
   public SqliteConnection Connection { get; }
-  public Database(string path, bool create = true)
+  public Database(string path, bool create = true, IPrivateFileSystem? files = null)
   {
+    this.files = files;
     LocalFiles.CheckLinks(path);
+    if (create && !File.Exists(path))
+    {
+      using var initial = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+      files?.RestrictCreatedFile(path);
+    }
+    pendingSidecars = new(new[] { path + "-wal", path + "-shm" }.Where(file => !File.Exists(file)));
     Connection = new SqliteConnection(new SqliteConnectionStringBuilder
     { DataSource = path, Mode = create ? SqliteOpenMode.ReadWriteCreate : SqliteOpenMode.ReadWrite, Pooling = false }.ToString());
     Connection.Open();
@@ -17,6 +26,8 @@ public sealed class Database : IDisposable
   {
     using var cmd = Command(sql, args);
     cmd.ExecuteNonQuery();
+    foreach (var file in pendingSidecars.ToArray())
+      if (File.Exists(file)) { files?.RestrictCreatedFile(file); pendingSidecars.Remove(file); }
   }
   public object? Scalar(string sql, params (string Name, object? Value)[] args)
   {

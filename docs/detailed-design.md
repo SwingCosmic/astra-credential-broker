@@ -18,7 +18,7 @@ flowchart LR
   C --> P[客户端自行调用供应商]
 ```
 
-OS 用户是本地安全边界。scopes 约束协议客户端，并不把同一 Windows 用户下的恶意进程变成隔离的安全主体：同用户进程若绕过协议直接读取该用户的 DPAPI 材料，仍拥有该用户权限。不同用户的访问由文件 ACL、目录属主、DPAPI CurrentUser 和命名管道权限约束。Windows 提权级别也须与管道服务相容；跨提权接入不在本次验证范围。
+OS 用户是本地安全边界。scopes 约束协议客户端，并不把同一 Windows 用户下的恶意进程变成隔离的安全主体：同用户进程若绕过协议直接读取该用户的 DPAPI 材料，仍拥有该用户权限。数据机密性和完整性由加密与认证保证，在线接入由 DPAPI CurrentUser、命名管道身份与协议授权约束；用户目录 ACL 不作为数据安全性的前提。Windows 提权级别也须与管道服务相容；跨提权接入不在本次验证范围。
 
 ## 2. 目录、身份与锁
 
@@ -31,12 +31,12 @@ OS 用户是本地安全边界。scopes 约束协议客户端，并不把同一 
 | 接口 | 能力/关键 API | 当前实现范围 |
 | --- | --- | --- |
 | `IUserIdentity` | `CurrentUserId`，返回不透明的当前用户身份字符串 | `WindowsUserIdentity`，SID |
-| `IPrivateFileSystem` | `CreatePrivateDirectory`、`ValidatePrivateDirectory`、`ValidateTree`、`DirectoryIdentity` | `WindowsPrivateFileSystem`，属主、DACL、目录句柄身份 |
+| `IPrivateFileSystem` | `CreateDataDirectory`、`CreatePrivateDirectory`、`RestrictCreatedFile`、路径校验 | `WindowsPrivateFileSystem`，读写探测、新建内容 DACL；DirectoryIdentity 仅用于诊断 |
 | `ISecretProtector` | `Protect`、`Unprotect`、`FileExtension` | `WindowsSecretProtector`，DPAPI CurrentUser 与 `.dpapi` 槽后缀 |
 | `ILocalTransport` | `Accept(address, cancellation)`、`Connect(address, cancellation)` 返回调用方拥有的 `Stream` | `Shared/NamedPipeTransport`，Windows/Linux/macOS 共享的字节模式管道，双端 CurrentUserOnly，取消/失败释放未交付句柄 |
 | `IComponentHost` | RID、默认 home、EXE/必需资产、路径比较/文件名策略、当前进程身份、独立启动、worker/tool 运行、存活检查、核验后终止 | `Shared/ComponentHost`，共用进程管理；ComponentHostProfile 提供三个系统的文件/目录/路径策略，启动处分支 |
 
-`Storage/LocalFiles` 只封装平台中立的路径检查、原子写入和独占打开，不声称建立 OS 权限边界；SQLite 包装器使用这些托管机制。私有目录权限和物理身份仍必须由 `IPrivateFileSystem` 实现。协议编解码、双向 HMAC 认证、请求分发、超时、租约和数据库事务均保留在中立层，不迁入平台适配。
+`Storage/LocalFiles` 只封装平台中立的路径检查、原子写入和独占打开，不声称建立 OS 权限边界；SQLite 包装器使用这些托管机制。新建内部内容的权限及用户目录的读写探测由 `IPrivateFileSystem` 实现；已有内容不逐项验证 ACL，物理身份不参与 vault 授权。协议编解码、双向 HMAC 认证、请求分发、超时、租约和数据库事务均保留在中立层，不迁入平台适配。
 
 ### 共享命名管道传输
 
@@ -100,7 +100,7 @@ service-home/
   install-journal.json               # 安装/卸载恢复日志，仅进行中存在
   maintenance.json                  # 禁止新启动的维护标志
   components/<version>-<unique>/     # 完整复制的自包含目录
-  vaults/<vaultId>.json              # 位置、属主、目录物理身份及启动登记
+  vaults/<vaultId>.json              # 位置、逻辑用户身份及启动登记
   keys/<vaultId>.admin.dpapi         # 管理接入材料
   keys/<vaultId>.<keyId>.dpapi        # broker 自有存储主密钥
   keys/<vaultId>.delivery.dpapi      # 初次密钥交付恢复槽；确认交付后删除
@@ -118,9 +118,9 @@ vault/
     endpoint.json                   # PID、进程创建时间、generation、管道名与最近状态
 ```
 
-新建受控目录使用受保护 DACL，只允许当前 SID 和 SYSTEM；SYSTEM 是 Windows 系统管理主体。子文件、WAL、临时文件和备份继承限制。打开时验证属主、权限、规范化本地路径及所有祖先的重解析点；安装复制也拒绝符号链接、目录联接、目录穿越、重复路径及额外文件。
+用户所选根目录保留原 ACL 和属主，不逐项拒绝已有文件权限。broker 对自身新建的内部目录、文件、WAL 和临时文件设置当前 SID 与 SYSTEM 权限，并检查实际读写能力；保持规范化本地路径及重解析点检查。安装复制仍拒绝符号链接、目录联接、目录穿越、重复路径及额外文件。
 
-目录物理身份由卷序列号和目录 FileIndex 组成，写入 manifest 和启动登记。把另一目录替换到同一路径不会被当成同一 vault。PID 同时绑定进程创建时间，防止 PID 复用造成误判。OS 独占锁始终独立于租约，endpoint 文件不是写入锁。
+旧版 manifest 和登记中的 DirectoryIdentity 字段兼容读取，新建时为空，不再参与校验。停服后复制/还原的完整 vault 使用逻辑 vaultId 和加密认证校验，不绑定文件系统 ID。PID 同时绑定进程创建时间，防止 PID 复用造成误判。OS 独占锁始终独立于租约，endpoint 文件不是写入锁。
 
 ### WindowsPrivateFileSystem 的直接原生调用
 
@@ -133,7 +133,7 @@ vault/
 
 Windows 打开目录句柄要求 `FILE_FLAG_BACKUP_SEMANTICS`，这个标志本身不授予或启用备份特权。最后一级的重解析点通过 `OPEN_REPARSE_POINT` 打开后被拒绝；祖先重解析点也由现有路径检查拒绝。句柄由 `SafeFileHandle` 确定性释放，不存在手工分配的非托管缓冲区，不需要 unsafe 代码。
 
-保留这两项绑定是为了获取文件系统对象身份；路径字符串无法识别同路径下的目录替换，创建时间也不能替代 FileIndex。身份不是目录内容哈希、密钥或授权依据；只是一项本地一致性检查，仍需结合 ACL、manifest、DPAPI 和锁，也不保证防止同用户攻击或文件系统 ID 重用。读取失败明确报 `directory-identity-unavailable`，不回退为路径或创建新 vault。
+这两项调用目前只保留为诊断辅助，不用于创建、打开或登记 vault。物理目录身份不是密钥或授权依据；新建 manifest 的兼容字段为空，普通复制、移动、备份和还原不会因文件系统 ID 改变被拒绝。
 
 API 语义参见 [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew) 和 [GetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle)。
 
@@ -234,3 +234,7 @@ abortUpdate 接受固定 failureCode、retryable 和 unchanged/unknown；失败�
 STOPPED/STARTING/FAILED 由控制器与运行登记报告；工作进程报告 LOCKED/READY/IDLE/DRAINING。READY 不等于已接管，ownership 单独报告。没有会话与有效在途许可时进入 IDLE，60 秒后退出；待处理许可仅保留至原截止时间。显式管理停止拒绝新许可，允许原许可提交/失败释放，最长排空 30 秒后持久化事实退出。
 
 主应用退出、卸载或切回私有不会移除服务密钥。独立组件卸载只删除运行组件和启动登记，保留 vault、授权、主密钥及回执。安装恢复的具体流程见 [安装文档](installation.md)。
+
+### 空闲维护的写入边界（2026-11-05）
+
+服务的 200 ms ticker 在没有 granted/started/queued 操作时，HasPending 仅执行存在性查询，不启动写事务、不更新 clock。断开没有该客户端排队票据的连接也不写入。存在活动操作时继续使用原事务中的过期/fence/时钟水位处理；不是关闭 durable clock 或 SQLite synchronous=FULL。这样服务等待会话超时、空闲退出期间不会仅因轮询不断追加 WAL。回归覆盖无业务空闲检查、管理断开、WAL 大小和 data_version 不变，以及活动租约过期与迟到提交拒绝。

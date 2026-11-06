@@ -8,6 +8,39 @@ namespace Broker.Tests;
 public sealed class VaultServiceTests
 {
   [WindowsFact]
+  public void IdleTicksAndManagementDisconnectDoNotWriteCredentialDatabaseOrGrowWal()
+  {
+    using var f = new Fixture();
+    f.Store.Dispose();
+    using var service = new BrokerService(f.Vault, new(f.Time));
+    var database = Path.Combine(f.Vault.VersionPath(f.Published.StorageVersion), "credentials.db");
+    using var observer = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={database};Pooling=False");
+    observer.Open();
+    long DataVersion()
+    {
+      using var command = observer.CreateCommand();
+      command.CommandText = "PRAGMA data_version";
+      return (long)command.ExecuteScalar()!;
+    }
+    var before = DataVersion();
+    var wal = database + "-wal";
+    var initialSize = File.Exists(wal) ? new FileInfo(wal).Length : 0;
+    for (var i = 0; i < 200; i++)
+    {
+      f.Time.Advance(200);
+      service.Tick();
+    }
+    service.Connect(Admin);
+    Call(service, Admin, "status", new { });
+    Call(service, Admin, "disconnect", new { });
+    Assert.Equal(initialSize, File.Exists(wal) ? new FileInfo(wal).Length : 0);
+    Assert.Equal(before, DataVersion());
+    service.Tick();
+    f.Time.Advance(BrokerService.IdleTimeout);
+    service.Tick();
+    Assert.True(service.ExitRequested);
+  }
+  [WindowsFact]
   public void OversizedEncryptedMigrationCannotPublishAnUnreadableVersion()
   {
     var root = BrokerPlatform.Current.Files.CreatePrivateDirectory(Path.Combine(Path.GetTempPath(), "AstraBrokerSize-" + Crypto.RandomId()));
@@ -85,13 +118,14 @@ public sealed class VaultServiceTests
     finally { Directory.Delete(root, true); }
   }
   [WindowsFact]
-  public void VaultLockAndDirectoryIdentityRejectDuplicateWriterAndReplacement()
+  public void VaultLockRejectsDuplicateWriterAndIncompleteBackupNeverCreatesControlDatabase()
   {
     using var fixture = new Fixture();
     Assert.Equal("lock-busy", Assert.Throws<BrokerException>(() => Vault.Open(fixture.Vault.Root, fixture.Vault.KeysRoot)).Code);
     var other = BrokerPlatform.Current.Files.CreatePrivateDirectory(Path.Combine(fixture.Root, "replacement"));
     File.Copy(Path.Combine(fixture.Vault.Root, "manifest.json"), Path.Combine(other, "manifest.json"));
-    Assert.Equal("vault-identity-mismatch", Assert.Throws<BrokerException>(() => Vault.Open(other, fixture.Vault.KeysRoot)).Code);
+    Assert.Equal("control-database-missing", Assert.Throws<BrokerException>(() => Vault.Open(other, fixture.Vault.KeysRoot)).Code);
+    Assert.False(File.Exists(Path.Combine(other, "control.db")));
   }
   [WindowsFact]
   public void MissingKeyEntersLockedAndWrongKeyCannotUnlockEmptyVault()

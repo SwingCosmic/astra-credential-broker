@@ -83,6 +83,7 @@ dotnet format --verify-no-changes --no-restore
 - [详细设计与数据结构](docs/detailed-design.md)
 - [通信、API 与错误语义](docs/protocol.md)
 - [本地安装、发现、运行及恢复](docs/installation.md)
+- [验收记录与复现](docs/validation.md)
 - [结构化协议 schema](schemas/protocol-v1.schema.json)
 - [跨运行时测试向量](test/vectors/transfer-v1.json)
 

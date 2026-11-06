@@ -7,7 +7,9 @@ public interface IUserIdentity
 
 public interface IPrivateFileSystem
 {
+  string CreateDataDirectory(string path) => CreatePrivateDirectory(path);
   string CreatePrivateDirectory(string path);
+  void RestrictCreatedFile(string path) { }
   void ValidatePrivateDirectory(string path);
   void ValidateTree(string root);
   string DirectoryIdentity(string path);

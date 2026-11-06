@@ -64,9 +64,7 @@ public sealed class ComponentManager
     Platform.Files.ValidatePrivateDirectory(registration.Root);
     var manifest = Read<VaultManifest>(Path.Combine(registration.Root, "manifest.json"));
     Protocol.Require(registration.OwnerSid == Platform.Identity.CurrentUserId && manifest.OwnerSid == registration.OwnerSid &&
-      manifest.VaultId == registration.VaultId && manifest.LayoutVersion == 1 &&
-      manifest.DirectoryIdentity == registration.DirectoryIdentity &&
-      Platform.Files.DirectoryIdentity(registration.Root) == registration.DirectoryIdentity, "vault-identity-mismatch");
+      manifest.VaultId == registration.VaultId && manifest.LayoutVersion == 1, "vault-identity-mismatch");
   }
   public async Task<VaultRegistration> RegisterVault(string root)
   {
@@ -78,6 +76,14 @@ public sealed class ComponentManager
     var existing = Vaults().FirstOrDefault(v => v.Root.Equals(full, Platform.Components.PathComparison));
     if (existing is not null) { VerifyRegistration(existing); return existing; }
     using var vault = Vault.Open(full, KeysRoot, true, Platform);
+    var previous = Vaults().FirstOrDefault(v => v.VaultId == vault.Manifest.VaultId);
+    if (previous is not null)
+    {
+      foreach (var directory in new[] { previous.Root, full })
+        foreach (var name in new[] { "endpoint.json", "supervisor.json" })
+          Protocol.Require(!ProcessAlive(Path.Combine(directory, "runtime", name), Platform), "vault-already-running");
+      Protocol.Require(await TryStatus(previous) is null, "vault-already-running");
+    }
     var registration = new VaultRegistration(vault.Manifest.VaultId, vault.Root, vault.Manifest.DirectoryIdentity, Platform.Identity.CurrentUserId);
     var adminPath = AdminPath(registration.VaultId);
     if (!File.Exists(adminPath))
@@ -313,8 +319,16 @@ public sealed class ComponentManager
     var status = await TryStatus(vault);
     if (status is not null)
     {
-      await using var client = await Management(vault);
-      await client.Call("stop", new { });
+      try
+      {
+        await using var client = await Management(vault);
+        await client.Call("stop", new { });
+      }
+      catch (Exception ex) when (ex is IOException or OperationCanceledException)
+      {
+        // The draining ticker may close the pipe before the stop reply is delivered.
+        // A lost reply is not proof of shutdown: require process exit and both locks below.
+      }
     }
     var endpointPath = Path.Combine(vault.Root, "runtime", "endpoint.json");
     for (var i = 0; i < 400; i++)

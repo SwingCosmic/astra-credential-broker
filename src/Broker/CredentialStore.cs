@@ -50,7 +50,7 @@ public sealed class CredentialStore : IDisposable
     this.clock = clock ?? new();
     this.generation = generation ?? Crypto.RandomId();
     Vault.VerifyKey(version, key);
-    db = new Database(Path.Combine(vault.VersionPath(version.StorageVersion), "credentials.db"), create);
+    db = new Database(Path.Combine(vault.VersionPath(version.StorageVersion), "credentials.db"), create, vault.Platform.Files);
     if (!create) Protocol.Require((long)db.Scalar("PRAGMA user_version")! == 1, "storage-incompatible");
     db.Execute("""
       CREATE TABLE IF NOT EXISTS records (
@@ -412,13 +412,21 @@ public sealed class CredentialStore : IDisposable
 
   public Operation GetOperation(Actor actor, string id) => Atomic(() => { Expire(); return Owned(actor, id); });
 
-  public void Disconnect(Actor actor) => Atomic(() =>
+  public void Disconnect(Actor actor)
   {
-    // In-flight leases survive transient disconnect. Only ungranted queue tickets are cancelled.
-    foreach (var op in Operations("state='queued'"))
-      if (op.ClientId == actor.ClientId && op.InstanceId == actor.InstanceId) Save(op with { Status = "cancelled" });
-    return true;
-  });
+    lock (gate)
+    {
+      // In-flight leases survive transient disconnect. A status-only management connection
+      // has no queue tickets, so disconnecting it must not start a write transaction.
+      var queued = Operations("state='queued'").Where(op => op.ClientId == actor.ClientId && op.InstanceId == actor.InstanceId).ToArray();
+      if (queued.Length == 0) return;
+      Atomic(() =>
+      {
+        foreach (var op in queued) Save(op with { Status = "cancelled" });
+        return true;
+      });
+    }
+  }
 
   public EventPage Events(Actor actor, string cursor, int limit = 100)
   {
@@ -441,6 +449,19 @@ public sealed class CredentialStore : IDisposable
     }
   }
 
-  public bool HasPending => Atomic(() => { Expire(); return Operations("state IN ('granted','started')").Count > 0; });
+  public bool HasPending
+  {
+    get
+    {
+      lock (gate)
+      {
+        // The 200 ms idle poll must remain read-only when there are no leases or queue
+        // tickets. Active operations retain expiry, fencing and durable clock handling.
+        if ((long)db.Scalar("SELECT EXISTS(SELECT 1 FROM operations WHERE state IN ('queued','granted','started'))")! == 0)
+          return false;
+        return Atomic(() => { Expire(); return Operations("state IN ('granted','started')").Count > 0; });
+      }
+    }
+  }
   public void Dispose() { db.Dispose(); CryptographicOperations.ZeroMemory(key); }
 }

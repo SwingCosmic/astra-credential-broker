@@ -31,7 +31,7 @@ public sealed class Vault : IDisposable
     KeysRoot = Platform.Files.CreatePrivateDirectory(keysRoot);
     Manifest = manifest;
     vaultLock = held;
-    Control = new Database(Path.Combine(root, "control.db"));
+    Control = new Database(Path.Combine(root, "control.db"), files: Platform.Files);
     Control.Execute("""
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS receipts (operation_id TEXT PRIMARY KEY, kind TEXT NOT NULL, client_id TEXT NOT NULL, request_hash TEXT NOT NULL, result TEXT NOT NULL);
@@ -46,7 +46,7 @@ public sealed class Vault : IDisposable
   public static Vault Open(string path, string keysRoot, bool create = false, BrokerPlatform? platform = null)
   {
     platform ??= BrokerPlatform.Current;
-    var root = create ? platform.Files.CreatePrivateDirectory(path) : LocalFiles.FullPath(path);
+    var root = create ? platform.Files.CreateDataDirectory(path) : LocalFiles.FullPath(path);
     Protocol.Require(Directory.Exists(root), "vault-not-found");
     platform.Files.ValidateTree(root);
     var runtime = platform.Files.CreatePrivateDirectory(Path.Combine(root, "runtime"));
@@ -58,17 +58,19 @@ public sealed class Vault : IDisposable
       if (File.Exists(manifestPath))
       {
         manifest = Protocol.Decode<VaultManifest>(Protocol.Parse(File.ReadAllBytes(manifestPath)));
-        Protocol.Require(manifest.LayoutVersion == 1 && manifest.OwnerSid == platform.Identity.CurrentUserId &&
-          manifest.DirectoryIdentity == platform.Files.DirectoryIdentity(root), "vault-identity-mismatch");
+        Protocol.Require(manifest.LayoutVersion == 1 && manifest.OwnerSid == platform.Identity.CurrentUserId, "vault-identity-mismatch");
         Protocol.Id(manifest.VaultId);
-        Protocol.Require(File.Exists(Path.Combine(root, "control.db")) || !Directory.Exists(Path.Combine(root, "versions")) ||
-          !Directory.EnumerateFileSystemEntries(Path.Combine(root, "versions")).Any(), "control-database-missing");
+        Protocol.Require(File.Exists(Path.Combine(root, "control.db")), "control-database-missing");
       }
       else
       {
         Protocol.Require(create && !File.Exists(Path.Combine(root, "control.db")), "manifest-missing");
-        manifest = new(1, Crypto.RandomId(), platform.Files.DirectoryIdentity(root), platform.Identity.CurrentUserId);
-        LocalFiles.WriteAtomic(manifestPath, Protocol.Encode(manifest));
+        // runtime contains only the lock created above; no arbitrary existing content is overwritten.
+        Protocol.Require(!Directory.EnumerateFileSystemEntries(root).Any(entry => Path.GetFileName(entry) != "runtime") &&
+          !Directory.EnumerateFileSystemEntries(runtime).Any(entry => Path.GetFileName(entry) != "vault.lock"), "vault-directory-not-empty");
+        // Keep the legacy field readable for v1 backups; physical filesystem identity is not binding.
+        manifest = new(1, Crypto.RandomId(), "", platform.Identity.CurrentUserId);
+        LocalFiles.WriteAtomic(manifestPath, Protocol.Encode(manifest), platform.Files);
       }
       platform.Files.CreatePrivateDirectory(Path.Combine(root, "versions"));
       return new(root, keysRoot, held, manifest, platform);

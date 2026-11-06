@@ -20,7 +20,7 @@ public static class LocalFiles
     if (File.Exists(path)) Protocol.Require((File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0, "reparse-point-rejected");
   }
 
-  public static void WriteAtomic(string path, byte[] value)
+  public static void WriteAtomic(string path, byte[] value, IPrivateFileSystem? files = null)
   {
     CheckLinks(path);
     var temp = Path.Combine(Path.GetDirectoryName(path)!, "." + Crypto.RandomId() + ".tmp");
@@ -28,6 +28,7 @@ public static class LocalFiles
     {
       using (var file = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
       {
+        files?.RestrictCreatedFile(temp);
         file.Write(value);
         file.Flush(true);
       }

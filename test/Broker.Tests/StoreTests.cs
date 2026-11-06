@@ -7,6 +7,21 @@ namespace Broker.Tests;
 public sealed class StoreTests
 {
   [WindowsFact]
+  public void PendingPollStillExpiresLeasesAndFencesLateCommitBeforeBecomingReadOnly()
+  {
+    using var f = new Fixture();
+    var operation = f.Grant();
+    f.Store.MarkStarted(Fixture.A, Fixture.Lease(operation));
+    f.Time.Advance(10_000);
+    Assert.True(f.Store.HasPending);
+    f.Time.Rollback(3_600_000);
+    f.Time.Advance(CredentialStore.LeaseTtl);
+    Assert.False(f.Store.HasPending);
+    Assert.Equal("expired", f.Store.GetOperation(Fixture.A, operation.OperationId).Status);
+    Assert.Equal("lease-expired", Assert.Throws<BrokerException>(() =>
+      f.Store.Commit(Fixture.A, new(Fixture.Lease(operation), Fixture.Payload("late")))).Code);
+  }
+  [WindowsFact]
   public void MetadataPagesStayWithinWireBudgetWithoutDroppingMatchingRecords()
   {
     using var f = new Fixture();

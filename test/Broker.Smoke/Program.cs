@@ -199,6 +199,9 @@ try
 }
 catch (Exception ex)
 {
+  // Fictional isolated test data only. Keep exception messages/requests private; method
+  // locations help distinguish process-exit and component-replacement failures.
+  Console.Error.WriteLine(ex.GetType().Name + "\n" + ex.StackTrace);
   if (ex is PlatformFeatureUnavailableException unavailable)
     Console.Error.WriteLine(JsonSerializer.Serialize(new
     {

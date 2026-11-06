@@ -48,7 +48,7 @@ public sealed class RecoverySecurityTests
     Assert.ThrowsAny<CryptographicException>(() => f.Store.Get(Fixture.A, "credential-1"));
   }
   [WindowsFact]
-  public void BroadFilePermissionsAreRejectedWithoutSilentlyRewritingExistingAcl()
+  public void ExistingFilePermissionsAreAcceptedWithoutRewritingAcl()
   {
     // This integration test deliberately changes a real Windows DACL.
     if (!OperatingSystem.IsWindows()) return;
@@ -60,8 +60,56 @@ public sealed class RecoverySecurityTests
     var acl = info.GetAccessControl();
     acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.WorldSid, null), FileSystemRights.Read, AccessControlType.Allow));
     info.SetAccessControl(acl);
-    try { Assert.Equal("file-permissions-too-broad", Assert.Throws<BrokerException>(() => BrokerPlatform.Current.Files.ValidateTree(f.Vault.Root)).Code); }
+    try
+    {
+      var expected = info.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All);
+      BrokerPlatform.Current.Files.ValidateTree(f.Vault.Root);
+      Assert.Equal(expected, info.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All));
+    }
     finally { info.SetAccessControl(original); }
+  }
+  [WindowsFact]
+  public void UserSelectedDirectoryKeepsAclAndCopiedBackupReopensWithOriginalKeys()
+  {
+    if (!OperatingSystem.IsWindows()) return;
+    var root = Path.Combine(Path.GetTempPath(), "AstraBackup-" + Crypto.RandomId());
+    var data = Directory.CreateDirectory(Path.Combine(root, "selected")).FullName;
+    var keys = Path.Combine(root, "keys");
+    var info = new DirectoryInfo(data);
+    var acl = info.GetAccessControl();
+    acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.WorldSid, null), FileSystemRights.ReadAndExecute, AccessControlType.Allow));
+    info.SetAccessControl(acl);
+    var before = info.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All);
+    try
+    {
+      string vaultId;
+      using (var vault = Vault.Open(data, keys, true))
+      {
+        vaultId = vault.Manifest.VaultId;
+        vault.Initialize(Fixture.A, new("export", "watermark", [new("record", "opaque", 1, Fixture.Payload("SECRET"), [])]));
+        foreach (var file in new[] { "manifest.json", "control.db", "control.db-wal", "control.db-shm" })
+        {
+          var rules = new FileInfo(Path.Combine(data, file)).GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier));
+          foreach (FileSystemAccessRule rule in rules)
+            Assert.True(rule.AccessControlType != AccessControlType.Allow ||
+              rule.IdentityReference.Equals(WindowsIdentity.GetCurrent().User) ||
+              rule.IdentityReference.Equals(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null)));
+        }
+      }
+      Assert.Equal(before, info.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All));
+      // A normal manual backup does not preserve the physical directory ID or private ACLs.
+      var copy = Directory.CreateDirectory(Path.Combine(root, "restored")).FullName;
+      foreach (var directory in Directory.EnumerateDirectories(data, "*", SearchOption.AllDirectories))
+        Directory.CreateDirectory(Path.Combine(copy, Path.GetRelativePath(data, directory)));
+      foreach (var file in Directory.EnumerateFiles(data, "*", SearchOption.AllDirectories))
+        File.Copy(file, Path.Combine(copy, Path.GetRelativePath(data, file)));
+      using var restored = Vault.Open(copy, keys);
+      Assert.Equal(vaultId, restored.Manifest.VaultId);
+      var version = restored.CurrentVersion();
+      using var store = new CredentialStore(restored, version, restored.LoadKey(version));
+      Assert.Equal(Fixture.Payload("SECRET"), store.Get(Fixture.A, "record").Payload);
+    }
+    finally { Directory.Delete(root, true); }
   }
   [WindowsFact]
   public void RestrictedOwnershipCannotBeForgedThroughExtraCreateFields()

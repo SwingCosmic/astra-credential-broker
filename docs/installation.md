@@ -17,7 +17,7 @@ dotnet restore --locked-mode
 
 `artifacts/publish/win-x64/` 包含 brokerctl.exe/DLL、deps/runtimeconfig、.NET runtime、hostfxr/hostpolicy/coreclr、SQLite native DLL 与 component.json。SelfContained=true；PublishAot、PublishTrimmed、PublishSingleFile 均为 false。验收工具另发布到 `artifacts/smoke-tools/win-x64/`，不能作为运行服务的依赖。
 
-component.json 包含组件、版本、RID、protocol/storage min/max 和每个文件的相对路径、长度、SHA-256。安装后通过组件内的 component-info 探测真实运行时和 SQLite。A2 的显式本地来源属于用户选择的开发信任输入；摘要用于完整性检查，不代替 A3 的发行签名与可信下载配置。
+component.json 包含组件、版本、RID、protocol/storage min/max 和每个文件的相对路径、长度、SHA-256。安装后通过组件内的 component-info 探测真实运行时和 SQLite。A2 的显式本地来源属于用户选择的开发信任输入；摘要用于完整性检查，不代替后续独立发布/下载阶段的发行签名与可信下载配置。
 
 ## 2. 安装和登记
 
@@ -38,7 +38,7 @@ install-status 与 status 都不启动服务。安装状态与运行状态分开
 
 ## 3. 按需运行与监督
 
-ensureRunning 校验安装、目录物理身份及登记，取得组件锁后复用已有端点；没有可用服务时从已登记组件目录隐藏启动独立 supervise 进程。启动器在 Windows 使用隐藏 Shell 方式；Linux/macOS 使用 nohup 与固定 shell 重定向/exec，EXE 与参数通过 ArgumentList 传入，标准输入输出在 exec 前切到 /dev/null。Unix 需要 /usr/bin/nohup 与 /bin/sh，缺失时报告 detached-launcher-unavailable。调用它的 CLI/产品退出不停止 supervisor 或 worker。
+ensureRunning 校验安装、逻辑 vault 身份及登记，取得组件锁后复用已有端点；没有可用服务时从已登记组件目录隐藏启动独立 supervise 进程。启动器在 Windows 使用隐藏 Shell 方式；Linux/macOS 使用 nohup 与固定 shell 重定向/exec，EXE 与参数通过 ArgumentList 传入，标准输入输出在 exec 前切到 /dev/null。Unix 需要 /usr/bin/nohup 与 /bin/sh，缺失时报告 detached-launcher-unavailable。调用它的 CLI/产品退出不停止 supervisor 或 worker。
 
 supervisor 取得 supervisor.lock，记录自己的 PID/创建时间，然后隐藏启动 serve worker。worker 独占 vault.lock，恢复版本、回执和原租约，写入端点后接受连接。并发请求只能得到同一有效 worker。进程监督只针对该 vault，不包含产品进程。
 
@@ -59,7 +59,7 @@ worker 正常排空或空闲退出时，supervisor 一起退出。worker 异常�
 
 recover --force 是用户显式管理动作：可终止已验证 PID、进程创建时间和已登记 EXE 路径的本 vault worker/supervisor。确认旧进程退出并取得锁后才启动新 generation。正常 ensureRunning 不杀进程；无法确认旧进程退出的卸载/替换报告失败，不启动竞争写入者。
 
-前台 serve 与后台 worker 共用加密、授权和数据库入口，Ctrl+C 请求排空。前台调试仍需登记 vault；不能绕过目录身份/OS 锁。调试结束使用 stop 或 Ctrl+C，原数据与主密钥保留。
+前台 serve 与后台 worker 共用加密、授权和数据库入口，Ctrl+C 请求排空。前台调试仍需登记 vault；不能绕过逻辑 vault 身份/OS 锁。调试结束使用 stop 或 Ctrl+C，原数据与主密钥保留。
 
 ## 5. 重装、升级与卸载
 
@@ -95,3 +95,13 @@ recover --force 是用户显式管理动作：可终止已验证 PID、进程创
 ComponentHostProfile 已提供 Linux（包括 musl RID）与 macOS 的 apphost、原生库、默认 home 和路径策略。Unix 组件复制调用 PrepareCopiedFile 保留普通权限并补 apphost owner execute；PID/创建时间与 EXE 路径核验、工具超时、worker 等待和终止逻辑共用。
 
 本仓库 publish/verify-local 脚本和 Smoke 工具目前仍面向 Windows x64 的完整交付验收。共享宿主实现可由 Linux/macOS 工厂选择，不代表这两个系统的完整 broker 已能安装运行：用户身份、私有目录与系统密钥保护仍明确报缺失能力。没有执行 Linux/macOS 实机验收，Unix 文件模式集成测试在 Windows 上明确跳过。
+
+## 7. 用户所选目录与手动备份
+
+新建 vault 接受不存在或为空的目录，已有目录的 ACL 和文件属主不作为拒绝条件，不自动收紧用户目录 ACL。broker 检查自己是否能创建、写入、改名、删除和打开所需数据；仅为自己新建的内部目录和文件设置权限，不遍历比较已有 ACL。加密、认证及完整性校验维持不变。
+
+备份或移动应先 stop 并等待完成，再完整复制 vault；服务 home 的系统保护密钥需要保留，跨用户或缺少系统密钥时使用迁移密钥流程。还原不要求保留目录文件系统 ID 或原 ACL。旧 manifest 的 DirectoryIdentity 字段仍可读取，但不再绑定物理目录。新位置执行 register-vault 重新登记相同 vaultId；若该 vault 仍在运行则拒绝同时重绑。只复制 manifest 而缺少 control.db 的不完整备份不能创建空库替代。
+
+## 8. 停止回复与空闲维护
+
+停止 RPC 可能与 draining ticker 关闭连接竞争。收到 EOF 或传输超时后，控制器仍须等待旧进程退出并取得 vault.lock 与 supervisor.lock；未确认退出则报告失败，不继续覆盖组件。没有活动/排队操作的空闲轮询与没有本客户端排队票据的管理断开保持只读，避免等待空闲退出时持续追加凭据数据库 WAL。
