@@ -17,7 +17,9 @@ dotnet restore --locked-mode
 
 `artifacts/publish/win-x64/` 包含 brokerctl.exe/DLL、deps/runtimeconfig、.NET runtime、hostfxr/hostpolicy/coreclr、SQLite native DLL 与 component.json。SelfContained=true；PublishAot、PublishTrimmed、PublishSingleFile 均为 false。验收工具另发布到 `artifacts/smoke-tools/win-x64/`，不能作为运行服务的依赖。
 
-component.json 包含组件、版本、RID、protocol/storage min/max 和每个文件的相对路径、长度、SHA-256。安装后通过组件内的 component-info 探测真实运行时和 SQLite。A2 的显式本地来源属于用户选择的开发信任输入；摘要用于完整性检查，不代替后续独立发布/下载阶段的发行签名与可信下载配置。
+component.json 包含组件 SemVer、`apiRevision`、RID、协议/数据格式范围及每个文件的相对路径、长度、SHA-256。组件 SemVer 只用于更新检查；协议整数版本只决定通信；API decimal 级别决定关键功能兼容。当前未发布 release 草稿仍为 `0.2.0`、协议为 `1`、API 为 `2`，三者独立演进。release 唯一定义位于 `Directory.Build.props`，manifest、CLI help/component-info 与握手从 InformationalVersion 读取完整 SemVer，保留 prerelease/build metadata。现有数据格式继续保持 v1，本轮不执行存储迁移。
+
+来源和复制后的完整性校验通过后，安装器执行候选组件的 component-info，要求 component/version/apiRevision 与 manifest 一致，实际 protocol/storage 落在声明范围且符合当前格式、SQLite 可运行，才进入维护与替换。此处 release 一致性检查证明清单描述的是该候选产物，属于安装完整性，不是 release 功能门槛。缺失/不足 API 在业务操作前报告 incompatible；有效 SemVer 更旧或更高均不影响 API 级别比较。A2 的显式本地来源属于用户选择的开发信任输入；摘要用于完整性检查，不代替后续发行签名与可信下载配置。
 
 ## 2. 安装和登记
 
@@ -35,6 +37,8 @@ $ctl = 'X:\copied-publish\brokerctl.exe'
 安装过程持有当前用户组件管理锁。先验证来源和暂存副本，再建立恢复日志/维护标志，排空全部已登记 vault，最后原子替换 installation.json。两个并发安装或 ensureRunning 请求在同一锁下合并/串行处理；下载/复制/探测失败保留旧安装。
 
 install-status 与 status 都不启动服务。安装状态与运行状态分开：安装完整但连接失败不会被报告为未安装。FAILED/LOCKED 也不触发自动重建共享库。
+
+普通管理连接（包括 grant 前的认证）和 ensureRunning 的实例复用先校验安装清单，再校验运行握手的协议和实际 API 级别。运行组件 SemVer 与安装登记不同不会拒绝业务，运行 API 更高也无需与清单精确相等；只要其满足客户端所需 API。握手仍认证所有版本字段。完整组件摘要验证在短时管道连接计时之前完成，避免校验耗时消耗连接预算。
 
 ## 3. 按需运行与监督
 
@@ -72,6 +76,10 @@ recover --force 是用户显式管理动作：可终止已验证 PID、进程创
 
 新安装成功登记后才移除旧组件目录。卸载暂停同一 home 下全部 vault，设置维护状态，排空/确认退出，移除组件与活动安装登记。保留 vaults 登记、数据、服务密钥、客户端授权和迁移/交接回执。重装复用原服务身份与密钥，客户端原令牌继续有效；无法解锁时进入 LOCKED。
 
+当前 0.2.0 安装器可排空仍在运行且无 API 声明的 0.1.0 产物：仅 TryStatus/Stop 管理路径使用旧握手，连接内白名单只有 status/stop/disconnect，普通产品连接要求所需 API 2。失败回滚可以校验并恢复旧组件原有文件摘要和登记；该旧产物仍因缺失 API 声明而 incompatible，而非因 SemVer 是 0.1.0。升级不转换 storage v1、不重建 vault、不清除主密钥或导入绑定。
+
+新式 Greeting 无需 release 兼容例外：普通管理、产品和生命周期连接都只按协议及所需 API 判断功能兼容。生命周期连接仍限制三项方法，并使用固定生命周期 API 2；SemVer 只检查格式并参与认证，不作版本大小或运行版本一致性门槛。
+
 本地失败恢复日志记录 previous/candidate/phase。prepared 阶段发生异常或安装器进程中断，下一次管理命令恢复旧登记、清除未发布候选并退出维护；committed 阶段恢复已完成的新登记。安装器与 vault 数据事务相互独立，任何失败都不删除共享数据。
 
 卸载不调用产品清理逻辑，产品卸载也不调用 broker uninstall。数据/密钥永久删除未作为本次默认管理命令提供。
@@ -90,6 +98,14 @@ recover --force 是用户显式管理动作：可终止已验证 PID、进程创
 
 本次按用户要求直接在本机验收。不存在“已执行干净虚拟机验收”的结论；本机可用 bundled-runtime-and-sqlite 检查确认实际运行的 System.Private.CoreLib 来自复制目录，而非系统预装 runtime。
 
+旧版在线升级的隔离验证入口：
+
+```powershell
+./scripts/verify-compatibility-upgrade.ps1 -OldPublish 'X:\old-0.1.0-publish' -Publish 'X:\new-0.2.0-publish'
+```
+
+脚本为旧产物建立独立 service-home/vault，创建虚构加密凭据，保持旧服务在线，检查新控制器只读拒旧，再由新安装器排空升级并验证原 vault 版本和记录修订保留。结束卸载测试组件，保留无秘密 upgrade-result.json；不覆盖用户实际安装、导入状态或共享目录。
+
 ## 7. 共享宿主的 Unix 策略
 
 ComponentHostProfile 已提供 Linux（包括 musl RID）与 macOS 的 apphost、原生库、默认 home 和路径策略。Unix 组件复制调用 PrepareCopiedFile 保留普通权限并补 apphost owner execute；PID/创建时间与 EXE 路径核验、工具超时、worker 等待和终止逻辑共用。
@@ -105,3 +121,17 @@ ComponentHostProfile 已提供 Linux（包括 musl RID）与 macOS 的 apphost�
 ## 8. 停止回复与空闲维护
 
 停止 RPC 可能与 draining ticker 关闭连接竞争。收到 EOF 或传输超时后，控制器仍须等待旧进程退出并取得 vault.lock 与 supervisor.lock；未确认退出则报告失败，不继续覆盖组件。没有活动/排队操作的空闲轮询与没有本客户端排队票据的管理断开保持只读，避免等待空闲退出时持续追加凭据数据库 WAL。
+
+## 9. API revision 2 本机验收（2026-11-06）
+
+按独立的 SemVer/协议/API 语义修订后，127 项测试通过、1 项 Unix 测试在 Windows 跳过。覆盖 SemVer prerelease/build metadata、较旧 release 配足够 API 的握手和业务、新 release 配不足 API 的零请求拒绝、所需 API 1/1.5 连接服务 API 2、manifest/probe 候选完整性、旧管理方法白名单、decimal 指数归一化/大于 Int32 与 JS 安全整数/28 位小数精度、无法精确表示时拒绝，以及整数 API 原认证字节不变。
+
+两端使用相同 verifier/身份/nonce 和组件 `0.0.1-beta+build.7` 的固定黄金向量核对认证字节及 HMAC：API `2.125`、`9007199254740993`、`2.0000000000000000000000000001` 三项均一致。期望证明由独立 Node crypto 对字面 canonical JSON 生成，.NET 与 TS 分别以固定常量断言，不是各自 roundtrip；普通迁移包 canonical 规则未扩展。
+
+decimal 语义修订后的最终独立产物 `artifacts/publish/versions-separated-win-x64` 已重新完成 29 项生命周期验收，覆盖四客户端并发启动、迁移/接管、C1→C2→C3、崩溃重启、原许可截止时间、缺钥 LOCKED、重装回滚与恢复、卸载保留、CLI 秘密文件和前台停止；实际 runtime 来自自包含 .NET 10.0.13。最终结果为 `C:/Users/a/AppData/Local/AstraBrokerValidation/db638b7f032f421195a571ed450d44c0/validation-result.json`，测试组件已卸载。
+
+分别使用 A3—A5 的 0.1.0 完整本地备份和 A6—A8 已增加方法但尚无 apiRevision 的 0.1.0 完整产物进行在线升级，两轮各 7 项检查通过：旧服务保持在线、新控制器只读判不兼容、新安装器排空替换、原 vault 版本及服务密钥保留、加密记录修订不变、新二进制报告 0.2.0/API 2/wire 1/storage 1。两个测试组件均已卸载；用户实际安装和导入绑定未在此验证中修改。
+
+decimal 语义修订的最终产物另对 A6—A8 无 API 声明的旧产物复测在线升级，7 项全部通过，原数据版本、服务密钥和记录修订均保留。最终结果为 `C:/Users/a/AppData/Local/Temp/astra-broker-upgrade-27f308cbe58142df9e4a5e5cc65b315f/upgrade-result.json`；此检查拒绝旧产物的原因是缺 API 声明，而不是旧 SemVer。
+
+新增严格安装验证时，首轮发现完整文件摘要读取消耗了原 300 ms 管道连接预算，导致新服务已 READY 仍被超时拒绝。校验现已移到连接计时之前，保留完整摘要校验；修复后的两套旧产物升级均通过。此验证使用隔离目录和虚构凭据，不代替生产下载或干净系统验收。

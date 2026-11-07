@@ -7,6 +7,22 @@ namespace Broker.Tests;
 public sealed class StoreTests
 {
   [WindowsFact]
+  public void CancelQueuedIsOwnedIdempotentAndCannotReleaseGrantedOrSuccessorLease()
+  {
+    using var f = new Fixture();
+    var active = f.Grant();
+    Assert.Equal("queued", f.Store.Begin(Fixture.B, new("credential-1", "1", "waiting")).Status);
+    Assert.Equal("forbidden", Assert.Throws<BrokerException>(() => f.Store.CancelQueued(Fixture.A, "waiting")).Code);
+    Assert.Equal("cancelled", f.Store.CancelQueued(Fixture.B, "waiting").Status);
+    Assert.Equal("cancelled", f.Store.CancelQueued(Fixture.B, "waiting").Status);
+    Assert.Equal(active, f.Store.CancelQueued(Fixture.A, active.OperationId));
+    f.Store.Abort(Fixture.A, new(Fixture.Lease(active), "failed", "cancelled", false, "unchanged"));
+    var successor = f.Grant(Fixture.B, "next");
+    Assert.Equal("granted", successor.Status);
+    Assert.Equal("cancelled", f.Store.CancelQueued(Fixture.B, "waiting").Status);
+    Assert.Equal(successor, f.Store.GetOperation(Fixture.B, "next"));
+  }
+  [WindowsFact]
   public void PendingPollStillExpiresLeasesAndFencesLateCommitBeforeBecomingReadOnly()
   {
     using var f = new Fixture();

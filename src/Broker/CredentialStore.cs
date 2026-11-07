@@ -412,6 +412,16 @@ public sealed class CredentialStore : IDisposable
 
   public Operation GetOperation(Actor actor, string id) => Atomic(() => { Expire(); return Owned(actor, id); });
 
+  public Operation CancelQueued(Actor actor, string id) => Atomic(() =>
+  {
+    Expire();
+    var op = Owned(actor, id);
+    if (op.Status != "queued") return op;
+    op = op with { Status = "cancelled", UpstreamOutcome = "unchanged" };
+    Save(op);
+    return op;
+  });
+
   public void Disconnect(Actor actor)
   {
     lock (gate)

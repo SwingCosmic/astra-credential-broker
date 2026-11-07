@@ -12,6 +12,8 @@ public sealed record MigrationValidation(string VaultId, string StorageVersion, 
 public sealed record Session(Actor Actor, long ExpiresAt);
 public sealed record UnlockRequest(string MasterKey);
 public sealed record ValidateMigration(string MigrationKey);
+public sealed record SharingState(string VaultId, string StorageVersion, string AttemptId, string KeyId,
+  string SourceWatermark, string SourceClientId, string[] PreparedClientIds, string Ownership);
 
 public sealed class BrokerService : IDisposable
 {
@@ -113,11 +115,12 @@ public sealed class BrokerService : IDisposable
     lock (gate)
     {
       Touch(actor);
-      if (new[] { "status", "heartbeat", "disconnect", "recoverDelivery", "acknowledgeDelivery", "prepareChallenge", "stop" }.Contains(method, StringComparer.Ordinal))
+      if (new[] { "status", "getSharingState", "heartbeat", "disconnect", "recoverDelivery", "acknowledgeDelivery", "prepareChallenge", "stop" }.Contains(method, StringComparer.Ordinal))
         _ = Protocol.Decode<EmptyParameters>(parameters);
       switch (method)
       {
         case "status": return Status();
+        case "getSharingState": return GetSharingState(actor);
         case "heartbeat": return new { expiresAt = clock.Now + SessionTtl };
         case "disconnect":
           sessions.Remove(SessionKey(actor));
@@ -139,6 +142,7 @@ public sealed class BrokerService : IDisposable
           return committed;
         case "abortUpdate": return Store.Abort(actor, Protocol.Decode<AbortUpdate>(parameters));
         case "getOperation": return GetOperation(actor, Protocol.Decode<OperationRequest>(parameters));
+        case "cancelQueuedUpdate": return Store.CancelQueued(actor, Protocol.Decode<OperationRequest>(parameters).OperationId);
         case "getEvents":
           var events = Protocol.Decode<EventsRequest>(parameters);
           return Store.Events(actor, events.Cursor, events.Limit);
@@ -187,6 +191,17 @@ public sealed class BrokerService : IDisposable
     var previous = changed;
     changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     previous.TrySetResult();
+  }
+  private SharingState GetSharingState(Actor actor)
+  {
+    Protocol.Require(actor.IsAdmin || actor.Scopes.Contains("import", StringComparer.Ordinal) ||
+      actor.Scopes.Contains("handoff", StringComparer.Ordinal), "forbidden");
+    var version = vault.CurrentVersion();
+    var watermark = vault.Setting("sourceWatermark") ?? throw new BrokerException("not-published");
+    var prepared = vault.Control.Rows("SELECT ready.client_id FROM ready JOIN clients ON clients.client_id=ready.client_id WHERE ready.storage_version=$version AND ready.watermark=$watermark AND clients.revoked=0 ORDER BY ready.client_id",
+      r => r.GetString(0), ("$version", version.StorageVersion), ("$watermark", watermark));
+    return new(vault.Manifest.VaultId, version.StorageVersion, version.AttemptId, version.KeyId, watermark,
+      vault.Setting("sourceClientId")!, prepared.ToArray(), vault.Setting("ownership")!);
   }
   public async Task<EventPage> Watch(Actor actor, WatchEventsRequest request, CancellationToken cancellationToken)
   {

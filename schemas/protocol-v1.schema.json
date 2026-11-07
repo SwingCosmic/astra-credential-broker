@@ -10,6 +10,15 @@
         "protocolVersion": {
           "type": "integer"
         },
+        "apiRevision": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 79228162514264337593543950335,
+          "description": "Exact nonnegative decimal API level: 96-bit coefficient, scale 0..28; no floating-point rounding."
+        },
+        "componentVersion": {
+          "type": "string"
+        },
         "vaultId": {
           "type": "string"
         },
@@ -22,6 +31,8 @@
       },
       "required": [
         "protocolVersion",
+        "apiRevision",
+        "componentVersion",
         "vaultId",
         "generation",
         "nonce"
@@ -33,6 +44,12 @@
       "properties": {
         "protocolVersion": {
           "type": "integer"
+        },
+        "apiRevision": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 79228162514264337593543950335,
+          "description": "Exact nonnegative decimal API level: 96-bit coefficient, scale 0..28; no floating-point rounding."
         },
         "clientId": {
           "type": "string"
@@ -53,6 +70,7 @@
       },
       "required": [
         "protocolVersion",
+        "apiRevision",
         "clientId",
         "instanceId",
         "clientNonce",
@@ -1436,6 +1454,49 @@
       ],
       "additionalProperties": false
     },
+    "SharingState": {
+      "type": "object",
+      "properties": {
+        "vaultId": {
+          "type": "string"
+        },
+        "storageVersion": {
+          "type": "string"
+        },
+        "attemptId": {
+          "type": "string"
+        },
+        "keyId": {
+          "type": "string"
+        },
+        "sourceWatermark": {
+          "type": "string"
+        },
+        "sourceClientId": {
+          "type": "string"
+        },
+        "preparedClientIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ownership": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "vaultId",
+        "storageVersion",
+        "attemptId",
+        "keyId",
+        "sourceWatermark",
+        "sourceClientId",
+        "preparedClientIds",
+        "ownership"
+      ],
+      "additionalProperties": false
+    },
     "ComponentManifest": {
       "type": "object",
       "properties": {
@@ -1482,6 +1543,13 @@
             ],
             "additionalProperties": false
           }
+        },
+        "apiRevision": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 79228162514264337593543950335,
+          "description": "Exact nonnegative decimal API level: 96-bit coefficient, scale 0..28; no floating-point rounding.",
+          "default": 0
         }
       },
       "required": [
@@ -1493,6 +1561,48 @@
         "storageMin",
         "storageMax",
         "files"
+      ],
+      "additionalProperties": false
+    },
+    "ComponentProbe": {
+      "type": "object",
+      "properties": {
+        "component": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "protocolVersion": {
+          "type": "integer"
+        },
+        "storageVersion": {
+          "type": "integer"
+        },
+        "sqliteReady": {
+          "type": "boolean"
+        },
+        "runtimeDirectory": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "apiRevision": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 79228162514264337593543950335,
+          "description": "Exact nonnegative decimal API level: 96-bit coefficient, scale 0..28; no floating-point rounding.",
+          "default": 0
+        }
+      },
+      "required": [
+        "component",
+        "version",
+        "protocolVersion",
+        "storageVersion",
+        "sqliteReady"
       ],
       "additionalProperties": false
     },
@@ -1700,6 +1810,31 @@
         },
         "method": {
           "const": "status"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "getSharingState"
         },
         "params": {
           "$ref": "#/$defs/Empty"
@@ -2003,6 +2138,31 @@
         },
         "params": {
           "$ref": "#/$defs/EventsRequest"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "cancelQueuedUpdate"
+        },
+        "params": {
+          "$ref": "#/$defs/OperationRequest"
         }
       }
     },

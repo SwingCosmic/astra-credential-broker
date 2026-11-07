@@ -18,8 +18,8 @@ internal static class Cli
       Console.OutputEncoding = new UTF8Encoding(false);
       if (args.Length == 0 || args[0] is "help" or "--help")
       {
-        Console.WriteLine("""
-          Astra Credential Broker 0.1.0 (protocol/storage v1; bundled adapters: Windows)
+        Console.WriteLine($"""
+          Astra Credential Broker {ComponentContract.Version} (protocol/storage v1; API revision {ComponentContract.ApiRevision}; bundled adapters: Windows)
           brokerctl component-info
           brokerctl schema --out <schema.json>
           brokerctl make-manifest --source <complete-publish-directory>
@@ -53,8 +53,8 @@ internal static class Cli
         connection.Open();
         using var query = connection.CreateCommand();
         query.CommandText = "SELECT sqlite_version()";
-        Output(new ComponentProbe("astra-credential-broker", "0.1.0", 1, 1, query.ExecuteScalar() is string,
-          Path.GetDirectoryName(typeof(object).Assembly.Location)));
+        Output(new ComponentProbe(ComponentContract.Name, ComponentContract.Version, Protocol.Version, ComponentContract.StorageVersion, query.ExecuteScalar() is string,
+          Path.GetDirectoryName(typeof(object).Assembly.Location), ComponentContract.ApiRevision));
         return 0;
       }
       if (command == "make-manifest") { Output(ComponentManager.MakeManifest(Required("source"))); return 0; }

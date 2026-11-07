@@ -32,6 +32,8 @@ Astra Credential Broker 是主要为 [AstraConductor](https://github.com/SwingCo
 
 当前完整运行和安装验收支持 **Windows x64**。Linux、macOS 已有共享的通信与进程管理实现，用户身份、私有目录权限和系统密钥保护仍待补齐。当前提供从源码构建与本地安装，签名发行和应用集成尚未完成。
 
+当前组件草稿为 `0.2.0`：组件版本是只用于更新检查的完整 SemVer，协议版本是决定通信的整数 `1`，API 版本是决定功能兼容的级别，当前为 `2`。三者独立；组件较旧但 API 足够仍可工作，组件较新但 API 不足仍拒绝。现有数据格式保持 v1，本轮不迁移数据；升级保留 vault、服务密钥、客户端授权和导入绑定。详细规则见[协议](./docs/protocol.md)与[安装/升级](./docs/installation.md)。
+
 ## 从源码试用
 
 在 Windows x64 上安装 .NET SDK **10.0.300**，进入仓库目录后运行：

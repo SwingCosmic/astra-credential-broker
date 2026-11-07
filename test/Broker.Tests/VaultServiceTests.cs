@@ -143,6 +143,32 @@ public sealed class VaultServiceTests
     Assert.Equal("READY", service.Status().ServiceStatusValue);
   }
   [WindowsFact]
+  public void SharingStateExposesOnlyCurrentPreparedParticipantsAndRequiresImportOrHandoff()
+  {
+    using var f = new Fixture();
+    f.Store.Dispose();
+    using var service = new BrokerService(f.Vault, new(f.Time));
+    Register(service, "client-a"); Register(service, "client-b"); Register(service, "client-c");
+    Prepare(service, f, Fixture.A, "ready-a");
+    Prepare(service, f, Fixture.B, "ready-b");
+    f.Vault.Control.Execute("INSERT INTO ready VALUES ('client-c','old-version','old-watermark')");
+    var state = (SharingState)Call(service, Fixture.B, "getSharingState", new { });
+    Assert.Equal(f.Vault.Manifest.VaultId, state.VaultId);
+    Assert.Equal(f.Published.StorageVersion, state.StorageVersion);
+    Assert.Equal(f.Initial.SourceWatermark, state.SourceWatermark);
+    Assert.Equal("client-a", state.SourceClientId);
+    Assert.Equal(new[] { "client-a", "client-b" }, state.PreparedClientIds);
+    Assert.Equal("source", state.Ownership);
+    Call(service, Admin, "revokeClient", new ClientIdRequest("client-b"));
+    Assert.Equal(new[] { "client-a" }, ((SharingState)Call(service, Fixture.A, "getSharingState", new { })).PreparedClientIds);
+    service.Connect(Admin);
+    Call(service, Admin, "registerClient", new RegisterClient("limited", ["describe"], [], true));
+    var limited = Fixture.Client("limited", "limited", ["describe"]);
+    service.Connect(limited);
+    Assert.Equal("forbidden", Assert.Throws<BrokerException>(() => Call(service, limited, "getSharingState", new { })).Code);
+    Assert.ThrowsAny<Exception>(() => Call(service, Fixture.A, "getSharingState", new { unexpected = true }));
+  }
+  [WindowsFact]
   public void HandoffRequiresTwoPreparedClientsSameWatermarkAndDurableReceipts()
   {
     using var f = new Fixture();

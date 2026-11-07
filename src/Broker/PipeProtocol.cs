@@ -6,11 +6,13 @@ using System.Text.Json;
 
 namespace Astra.Credentials;
 
-public sealed record Greeting(int ProtocolVersion, string VaultId, string Generation, string Nonce);
-public sealed record Hello(int ProtocolVersion, string ClientId, string InstanceId, string ClientNonce, string Proof, bool Management = false);
+public sealed record Greeting(int ProtocolVersion, decimal ApiRevision, string ComponentVersion, string VaultId, string Generation, string Nonce);
+public sealed record Hello(int ProtocolVersion, decimal ApiRevision, string ClientId, string InstanceId, string ClientNonce, string Proof, bool Management = false);
 public sealed record Welcome(string Proof);
 public sealed record RpcRequest(int ProtocolVersion, string Id, string Method, JsonElement Params);
 public sealed record RpcResponse(string Id, bool Ok, JsonElement? Result, string? Error);
+internal sealed record LegacyGreeting(int ProtocolVersion, string VaultId, string Generation, string Nonce);
+internal sealed record LegacyHello(int ProtocolVersion, string ClientId, string InstanceId, string ClientNonce, string Proof, bool Management);
 
 public static class PipeProtocol
 {
@@ -18,9 +20,14 @@ public static class PipeProtocol
   {
     return "astra-credentials-v1-" + Crypto.Hash(Encoding.UTF8.GetBytes((platform ?? BrokerPlatform.Current).Identity.CurrentUserId + ":" + vaultId));
   }
-  public static byte[] AuthMessage(Greeting greeting, Hello hello, string role) => CanonicalJson.Of(new object[]
-  { "astra.pipe-auth.v1", role, greeting.ProtocolVersion, greeting.VaultId, greeting.Generation, greeting.Nonce,
-    hello.ClientId, hello.InstanceId, hello.ClientNonce, hello.Management });
+  public static byte[] AuthMessage(Greeting greeting, Hello hello, string role)
+  {
+    object[] values = ["astra.pipe-auth.v1", role, greeting.ProtocolVersion, greeting.ApiRevision, greeting.ComponentVersion,
+      greeting.VaultId, greeting.Generation, greeting.Nonce, hello.ApiRevision, hello.ClientId, hello.InstanceId, hello.ClientNonce, hello.Management];
+    // Only API slots accept exact decimal tokens. Existing integer API proofs remain byte-for-byte unchanged.
+    var encoded = values.Select((value, index) => index is 3 or 8 ? ApiLevel.Format((decimal)value) : Encoding.UTF8.GetString(CanonicalJson.Of(value)));
+    return Encoding.UTF8.GetBytes("[" + string.Join(',', encoded) + "]");
+  }
   public static string Proof(byte[] verifier, Greeting greeting, Hello hello, string role) => Crypto.B64(HMACSHA256.HashData(verifier, AuthMessage(greeting, hello, role)));
   public static async Task Write<T>(Stream stream, T value, CancellationToken cancellationToken)
   {
@@ -107,10 +114,12 @@ public sealed class PipeServer(BrokerService service, string vaultId, byte[] adm
       try
       {
         timeout.CancelAfter(TimeSpan.FromSeconds(5));
-        var greeting = new Greeting(1, vaultId, service.Generation, Crypto.B64(RandomNumberGenerator.GetBytes(32)));
+        var greeting = new Greeting(Protocol.Version, ComponentContract.ApiRevision, ComponentContract.Version,
+          vaultId, service.Generation, Crypto.B64(RandomNumberGenerator.GetBytes(32)));
         await PipeProtocol.Write(pipe, greeting, timeout.Token);
         var hello = await PipeProtocol.Read<Hello>(pipe, timeout.Token);
         Protocol.Require(hello.ProtocolVersion == Protocol.Version, "protocol-incompatible");
+        Protocol.Require(hello.ApiRevision <= ComponentContract.ApiRevision, "api-incompatible");
         Protocol.Id(hello.ClientId);
         Protocol.Id(hello.InstanceId);
         Protocol.Require(Crypto.Unb64(hello.ClientNonce, 32).Length == 32, "invalid-challenge");
@@ -166,10 +175,12 @@ public sealed class BrokerClient : IAsyncDisposable
 {
   private readonly Stream pipe;
   private readonly SemaphoreSlim serial = new(1, 1);
-  private BrokerClient(Stream pipe) { this.pipe = pipe; }
+  private readonly bool legacyLifecycle;
+  private BrokerClient(Stream pipe, bool legacyLifecycle = false) { this.pipe = pipe; this.legacyLifecycle = legacyLifecycle; }
   public static async Task<BrokerClient> Connect(string vaultId, string clientId, string instanceId, byte[] accessToken,
-    bool management = false, CancellationToken cancellationToken = default, BrokerPlatform? platform = null)
+    bool management = false, CancellationToken cancellationToken = default, BrokerPlatform? platform = null, bool allowLegacyLifecycle = false)
   {
+    Protocol.Require(!allowLegacyLifecycle || management, "management-required");
     platform ??= BrokerPlatform.Current;
     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     timeout.CancelAfter(TimeSpan.FromSeconds(5));
@@ -177,20 +188,43 @@ public sealed class BrokerClient : IAsyncDisposable
     var verifier = SHA256.HashData(accessToken);
     try
     {
-      var greeting = await PipeProtocol.Read<Greeting>(pipe, timeout.Token);
-      Protocol.Require(greeting.ProtocolVersion == 1 && greeting.VaultId == vaultId, "server-identity-mismatch");
-      var hello = new Hello(1, clientId, instanceId, Crypto.B64(RandomNumberGenerator.GetBytes(32)), "", management);
+      var greetingJson = await PipeProtocol.Read<JsonElement>(pipe, timeout.Token);
+      if (!greetingJson.TryGetProperty("apiRevision", out _))
+      {
+        Protocol.Require(allowLegacyLifecycle && management, "api-incompatible");
+        // Explicit upgrade/stop path only. No application RPC can use this unversioned API connection.
+        var legacy = Protocol.Decode<LegacyGreeting>(greetingJson);
+        Protocol.Require(legacy.ProtocolVersion == Protocol.Version, "protocol-incompatible");
+        Protocol.Require(legacy.VaultId == vaultId, "server-identity-mismatch");
+        var legacyHello = new LegacyHello(Protocol.Version, clientId, instanceId, Crypto.B64(RandomNumberGenerator.GetBytes(32)), "", true);
+        string Proof(string role) => Crypto.B64(HMACSHA256.HashData(verifier, CanonicalJson.Of(new object[] {
+          "astra.pipe-auth.v1", role, legacy.ProtocolVersion, legacy.VaultId, legacy.Generation, legacy.Nonce,
+          legacyHello.ClientId, legacyHello.InstanceId, legacyHello.ClientNonce, true })));
+        legacyHello = legacyHello with { Proof = Proof("client") };
+        await PipeProtocol.Write(pipe, legacyHello, timeout.Token);
+        var legacyWelcome = await PipeProtocol.Read<Welcome>(pipe, timeout.Token);
+        Protocol.Require(Crypto.Equal(legacyWelcome.Proof, Proof("server")), "server-identity-mismatch");
+        return new(pipe, legacyLifecycle: true);
+      }
+      var greeting = Protocol.Decode<Greeting>(greetingJson);
+      Protocol.Require(greeting.ProtocolVersion == Protocol.Version, "protocol-incompatible");
+      Protocol.Require(greeting.VaultId == vaultId, "server-identity-mismatch");
+      if (allowLegacyLifecycle) ComponentContract.RequireLifecycleCompatible(greeting.ComponentVersion, greeting.ApiRevision);
+      else ComponentContract.RequireSupported(greeting.ComponentVersion, greeting.ApiRevision);
+      var clientApiRevision = allowLegacyLifecycle ? ComponentContract.LifecycleApiRevision : ComponentContract.ApiRevision;
+      var hello = new Hello(Protocol.Version, clientApiRevision, clientId, instanceId, Crypto.B64(RandomNumberGenerator.GetBytes(32)), "", management);
       hello = hello with { Proof = PipeProtocol.Proof(verifier, greeting, hello, "client") };
       await PipeProtocol.Write(pipe, hello, timeout.Token);
       var welcome = await PipeProtocol.Read<Welcome>(pipe, timeout.Token);
       Protocol.Require(Crypto.Equal(welcome.Proof, PipeProtocol.Proof(verifier, greeting, hello, "server")), "server-identity-mismatch");
-      return new(pipe);
+      return new(pipe, legacyLifecycle: allowLegacyLifecycle);
     }
     catch { pipe.Dispose(); throw; }
     finally { CryptographicOperations.ZeroMemory(verifier); }
   }
   public async Task<JsonElement> Call(string method, object parameters, CancellationToken cancellationToken = default)
   {
+    Protocol.Require(!legacyLifecycle || method is "status" or "stop" or "disconnect", "legacy-lifecycle-only");
     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     timeout.CancelAfter(TimeSpan.FromSeconds(10));
     await serial.WaitAsync(timeout.Token);

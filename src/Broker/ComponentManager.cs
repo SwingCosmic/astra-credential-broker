@@ -6,7 +6,7 @@ namespace Astra.Credentials;
 
 public sealed record ComponentFile(string Path, long Size, string Sha256);
 public sealed record ComponentManifest(string Component, string Version, string Rid, int ProtocolMin, int ProtocolMax,
-  int StorageMin, int StorageMax, ComponentFile[] Files);
+  int StorageMin, int StorageMax, ComponentFile[] Files, decimal ApiRevision = 0);
 public sealed record Installation(string Version, string Directory, string ManifestHash);
 public sealed record VaultRegistration(string VaultId, string Root, string DirectoryIdentity, string OwnerSid, string Supervision = "detached-process");
 public sealed record InstallJournal(Installation? Previous, Installation? Candidate, string Phase);
@@ -97,10 +97,16 @@ public sealed class ComponentManager
   }
   public string AdminPath(string vaultId) => Path.Combine(KeysRoot, Protocol.Id(vaultId) + ".admin" + Platform.Secrets.FileExtension);
   public byte[] AdminToken(string vaultId) => Platform.Secrets.Unprotect(File.ReadAllBytes(AdminPath(vaultId)), "management:" + vaultId);
-  public async Task<BrokerClient> Management(VaultRegistration vault, CancellationToken cancellationToken = default)
+  public async Task<BrokerClient> Management(VaultRegistration vault, CancellationToken cancellationToken = default, bool allowLegacyLifecycle = false)
+  {
+    if (!allowLegacyLifecycle) _ = ValidateInstallation();
+    return await ConnectManagement(vault, cancellationToken, allowLegacyLifecycle);
+  }
+  private async Task<BrokerClient> ConnectManagement(VaultRegistration vault, CancellationToken cancellationToken,
+    bool allowLegacyLifecycle)
   {
     var token = AdminToken(vault.VaultId);
-    try { return await BrokerClient.Connect(vault.VaultId, "management", "controller", token, true, cancellationToken, Platform); }
+    try { return await BrokerClient.Connect(vault.VaultId, "management", "controller", token, true, cancellationToken, Platform, allowLegacyLifecycle); }
     finally { CryptographicOperations.ZeroMemory(token); }
   }
   private bool ContainsPath(string parent, string child) => LocalFiles.ContainsPath(parent, child, Platform.Components.PathComparison);
@@ -113,7 +119,8 @@ public sealed class ComponentManager
       .Select(path => new ComponentFile(Path.GetRelativePath(root, path).Replace('\\', '/'), new FileInfo(path).Length,
         Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)))))
       .OrderBy(f => f.Path, StringComparer.Ordinal).ToArray();
-    var manifest = new ComponentManifest("astra-credential-broker", "0.1.0", platform.Components.RuntimeIdentifier, 1, 1, 1, 1, files);
+    var manifest = new ComponentManifest(ComponentContract.Name, ComponentContract.Version, platform.Components.RuntimeIdentifier,
+      Protocol.Version, Protocol.Version, ComponentContract.StorageVersion, ComponentContract.StorageVersion, files, ComponentContract.ApiRevision);
     LocalFiles.WriteAtomic(Path.Combine(root, "component.json"), Protocol.Encode(manifest));
     return manifest;
   }
@@ -128,13 +135,17 @@ public sealed class ComponentManager
     }
     return result;
   }
-  public static ComponentManifest VerifyComponent(string root, BrokerPlatform? platform = null)
+  public static ComponentManifest VerifyComponent(string root, BrokerPlatform? platform = null, bool requireCurrentApi = true)
   {
     platform ??= BrokerPlatform.Current;
     LocalFiles.CheckLinks(root);
     var manifest = Read<ComponentManifest>(Path.Combine(root, "component.json"));
-    Protocol.Require(manifest.Component == "astra-credential-broker" && Version.TryParse(manifest.Version, out var componentVersion) && componentVersion.Build >= 0 && manifest.Rid == platform.Components.RuntimeIdentifier &&
-      manifest.ProtocolMin <= 1 && manifest.ProtocolMax >= 1 && manifest.StorageMin <= 1 && manifest.StorageMax >= 1, "component-incompatible");
+    if (requireCurrentApi) ComponentContract.RequireSupported(manifest.Version, manifest.ApiRevision);
+    else ComponentContract.RequireVersion(manifest.Version);
+    Protocol.Require(manifest.Component == ComponentContract.Name && manifest.Rid == platform.Components.RuntimeIdentifier, "component-incompatible");
+    Protocol.Require(manifest.ProtocolMin >= 1 && manifest.ProtocolMax >= manifest.ProtocolMin && manifest.StorageMin >= 1 && manifest.StorageMax >= manifest.StorageMin, "invalid-component-manifest");
+    Protocol.Require(manifest.ProtocolMin <= Protocol.Version && manifest.ProtocolMax >= Protocol.Version, "protocol-incompatible");
+    Protocol.Require(manifest.StorageMin <= ComponentContract.StorageVersion && manifest.StorageMax >= ComponentContract.StorageVersion, "storage-incompatible");
     var paths = new HashSet<string>(platform.Components.PathComparer);
     Protocol.Require(manifest.Files.Length is > 0 and <= 2000, "invalid-component-manifest");
     foreach (var file in manifest.Files)
@@ -155,7 +166,8 @@ public sealed class ComponentManager
     var installed = Installed ?? throw new BrokerException("not-installed");
     Protocol.Require(ContainsPath(Components, installed.Directory) && !installed.Directory.Equals(Components, Platform.Components.PathComparison), "invalid-installation-registration");
     Platform.Files.ValidateTree(installed.Directory);
-    _ = VerifyComponent(installed.Directory, Platform);
+    var manifest = VerifyComponent(installed.Directory, Platform);
+    Protocol.Require(installed.Version == manifest.Version, "component-integrity-failed");
     Protocol.Require(Crypto.Hash(File.ReadAllBytes(Path.Combine(installed.Directory, "component.json"))) == installed.ManifestHash, "component-integrity-failed");
     return installed;
   }
@@ -164,6 +176,7 @@ public sealed class ComponentManager
     // Read-only and never starts a task/service. No lock/journal recovery here.
     try { return new(Installed is null ? "not-installed" : InMaintenance ? "maintenance" : "installed", Installed is null ? null : ValidateInstallation(), null); }
     catch (PlatformFeatureUnavailableException) { throw; }
+    catch (BrokerException ex) when (ex.Code is "component-incompatible" or "api-incompatible" or "protocol-incompatible" or "storage-incompatible") { return new("incompatible", Installed, ex.Code); }
     catch (Exception ex) { return new("damaged", null, PipeServer.ErrorCode(ex)); }
   }
 
@@ -192,7 +205,7 @@ public sealed class ComponentManager
       candidate = candidate with { ManifestHash = Crypto.Hash(File.ReadAllBytes(Path.Combine(target, "component.json"))) };
       var probe = await Platform.Components.RunTool(Path.Combine(target, Platform.Components.ExecutableName), ["component-info"]);
       var info = Protocol.Decode<ComponentProbe>(Protocol.Parse(Encoding.UTF8.GetBytes(probe)));
-      Protocol.Require(info.Component == manifest.Component && info.Version == manifest.Version && info.ProtocolVersion == 1 && info.SqliteReady, "component-probe-failed");
+      ValidateProbe(manifest, info);
       Fault?.Invoke("staged");
       WriteJournal(new(previous, candidate, "prepared"));
       EnterMaintenance();
@@ -215,6 +228,14 @@ public sealed class ComponentManager
     }
   }
   private void WriteJournal(InstallJournal journal) => LocalFiles.WriteAtomic(JournalPath, Protocol.Encode(journal));
+  public static void ValidateProbe(ComponentManifest manifest, ComponentProbe info)
+  {
+    Protocol.Require(info.Component == manifest.Component && info.Version == manifest.Version && info.ApiRevision == manifest.ApiRevision &&
+      info.ProtocolVersion == Protocol.Version && info.ProtocolVersion >= manifest.ProtocolMin && info.ProtocolVersion <= manifest.ProtocolMax &&
+      info.StorageVersion == ComponentContract.StorageVersion && info.StorageVersion >= manifest.StorageMin && info.StorageVersion <= manifest.StorageMax &&
+      info.SqliteReady, "component-probe-failed");
+    ComponentContract.RequireSupported(info.Version, info.ApiRevision);
+  }
   private void EnterMaintenance() => LocalFiles.WriteAtomic(MaintenancePath, Protocol.Encode(new { maintenance = true }));
   private void DeleteComponent(string path)
   {
@@ -236,14 +257,16 @@ public sealed class ComponentManager
     {
       if (journal.Candidate is not null)
       {
-        _ = VerifyComponent(journal.Candidate.Directory, Platform);
+        // Recover an already committed older installer journal without advertising its API as compatible.
+        _ = VerifyComponent(journal.Candidate.Directory, Platform, requireCurrentApi: false);
         LocalFiles.WriteAtomic(RegistryPath, Protocol.Encode(journal.Candidate));
       }
       else { if (File.Exists(RegistryPath)) File.Delete(RegistryPath); }
     }
     else if (journal.Previous is not null)
     {
-      _ = VerifyComponent(journal.Previous.Directory, Platform);
+      // Rollback verifies all old file hashes/layout, without treating the old API as usable by new clients.
+      _ = VerifyComponent(journal.Previous.Directory, Platform, requireCurrentApi: false);
       LocalFiles.WriteAtomic(RegistryPath, Protocol.Encode(journal.Previous));
     }
     else
@@ -301,12 +324,14 @@ public sealed class ComponentManager
     }
     throw new BrokerException("service-start-failed");
   }
-  public async Task<ServiceStatus?> TryStatus(VaultRegistration vault)
+  public async Task<ServiceStatus?> TryStatus(VaultRegistration vault, bool allowLegacyLifecycle = false)
   {
     try
     {
+      // Hashing the full self-contained component must not consume the short pipe-connect timeout.
+      if (!allowLegacyLifecycle) _ = ValidateInstallation();
       using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
-      await using var client = await Management(vault, timeout.Token);
+      await using var client = await ConnectManagement(vault, timeout.Token, allowLegacyLifecycle);
       var status = Protocol.Decode<ServiceStatus>(await client.Call("status", new { }));
       await client.Call("disconnect", new { });
       return status;
@@ -316,12 +341,12 @@ public sealed class ComponentManager
   public async Task Stop(VaultRegistration vault)
   {
     LocalFiles.WriteAtomic(Path.Combine(vault.Root, "runtime", "stop.request"), Protocol.Encode(new { stop = true }));
-    var status = await TryStatus(vault);
+    var status = await TryStatus(vault, allowLegacyLifecycle: true);
     if (status is not null)
     {
       try
       {
-        await using var client = await Management(vault);
+        await using var client = await Management(vault, allowLegacyLifecycle: true);
         await client.Call("stop", new { });
       }
       catch (Exception ex) when (ex is IOException or OperationCanceledException)
@@ -382,4 +407,4 @@ public sealed class ComponentManager
     (platform ?? BrokerPlatform.Current).Components.RunTool(exe, args, allowFailure);
 
 }
-public sealed record ComponentProbe(string Component, string Version, int ProtocolVersion, int StorageVersion, bool SqliteReady, string? RuntimeDirectory = null);
+public sealed record ComponentProbe(string Component, string Version, int ProtocolVersion, int StorageVersion, bool SqliteReady, string? RuntimeDirectory = null, decimal ApiRevision = 0);

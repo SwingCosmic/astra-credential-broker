@@ -26,6 +26,7 @@ public static partial class Protocol
     RespectNullableAnnotations = true,
     NumberHandling = JsonNumberHandling.Strict,
     TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver(),
+    Converters = { new ApiLevelJsonConverter() },
   };
 
   [GeneratedRegex("^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$", RegexOptions.CultureInvariant)]
