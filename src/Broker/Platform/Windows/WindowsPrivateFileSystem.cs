@@ -33,7 +33,8 @@ internal sealed class WindowsPrivateFileSystem : IPrivateFileSystem
   public void RestrictCreatedFile(string path)
   {
     var acl = new FileSecurity();
-    acl.SetOwner(User);
+    // A file created in a user-selected directory may inherit Modify without
+    // WRITE_OWNER. Its existing owner can protect the DACL without changing ownership.
     acl.SetAccessRuleProtection(true, false);
     foreach (var principal in new[] { User, SystemUser })
       acl.AddAccessRule(new FileSystemAccessRule(principal, FileSystemRights.FullControl, AccessControlType.Allow));

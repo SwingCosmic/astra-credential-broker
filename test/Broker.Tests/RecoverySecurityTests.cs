@@ -112,6 +112,67 @@ public sealed class RecoverySecurityTests
     finally { Directory.Delete(root, true); }
   }
   [WindowsFact]
+  public void UserSelectedDirectoryWithModifyAccessPublishesWithoutChangingOwnershipOrDirectoryAcl()
+  {
+    if (!OperatingSystem.IsWindows()) return;
+    var root = Path.Combine(Path.GetTempPath(), "AstraModifyAccess-" + Crypto.RandomId());
+    var parent = Directory.CreateDirectory(root);
+    var user = WindowsIdentity.GetCurrent().User!;
+    var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+    var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+    var authenticatedUsers = new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null);
+    var inheritance = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+    var acl = new DirectorySecurity();
+    acl.SetAccessRuleProtection(true, false);
+    acl.AddAccessRule(new FileSystemAccessRule(authenticatedUsers, FileSystemRights.Modify,
+      inheritance, PropagationFlags.None, AccessControlType.Allow));
+    foreach (var principal in new[] { administrators, system })
+      acl.AddAccessRule(new FileSystemAccessRule(principal, FileSystemRights.FullControl,
+        inheritance, PropagationFlags.None, AccessControlType.Allow));
+    // Use the same .NET ACL API as the broker. PowerShell Set-Acl can enable ownership
+    // privileges and hide the failure encountered by an ordinary application process.
+    parent.SetAccessControl(acl);
+    try
+    {
+      var selected = Directory.CreateDirectory(Path.Combine(root, "selected"));
+      var parentBefore = parent.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All);
+      var selectedBefore = selected.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All);
+      var ordinary = Path.Combine(selected.FullName, "ordinary.txt");
+      File.WriteAllText(ordinary, "no secrets");
+      var inherited = new FileInfo(ordinary).GetAccessControl();
+      var owner = inherited.GetOwner(typeof(SecurityIdentifier));
+      var inheritedRules = inherited.GetAccessRules(true, true, typeof(SecurityIdentifier));
+      foreach (FileSystemAccessRule rule in inheritedRules)
+        Assert.False(rule.AccessControlType == AccessControlType.Allow && rule.IdentityReference.Equals(user) &&
+          (rule.FileSystemRights & FileSystemRights.FullControl) == FileSystemRights.FullControl);
+      File.Delete(ordinary);
+      using (var vault = Vault.Open(selected.FullName, Path.Combine(root, "keys"), true))
+      {
+        vault.Initialize(Fixture.A, new("export", "watermark", [new("record", "opaque", 1, Fixture.Payload("FICTIONAL"), [])]));
+        // Both atomic manifest creation and Database's initial file/WAL/SHM protection
+        // must work without WRITE_OWNER inherited from the selected directory.
+        foreach (var name in new[] { "manifest.json", "control.db", "control.db-wal", "control.db-shm" })
+        {
+          var fileAcl = new FileInfo(Path.Combine(selected.FullName, name)).GetAccessControl();
+          Assert.Equal(owner, fileAcl.GetOwner(typeof(SecurityIdentifier)));
+          Assert.True(fileAcl.AreAccessRulesProtected);
+          var rules = fileAcl.GetAccessRules(true, true, typeof(SecurityIdentifier));
+          Assert.Equal(2, rules.Count);
+          foreach (FileSystemAccessRule rule in rules)
+          {
+            Assert.False(rule.IsInherited);
+            Assert.Equal(AccessControlType.Allow, rule.AccessControlType);
+            Assert.True(rule.IdentityReference.Equals(user) || rule.IdentityReference.Equals(system));
+            Assert.Equal(FileSystemRights.FullControl, rule.FileSystemRights);
+          }
+        }
+      }
+      Assert.Equal(parentBefore, parent.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All));
+      Assert.Equal(selectedBefore, selected.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All));
+    }
+    finally { Directory.Delete(root, true); }
+  }
+  [WindowsFact]
   public void RestrictedOwnershipCannotBeForgedThroughExtraCreateFields()
   {
     var json = "{\"credentialId\":\"id\",\"operationId\":\"op\",\"contentType\":\"custom\",\"payloadFormatVersion\":1,\"payload\":\"\",\"metadata\":{},\"createdByClientId\":\"forged\"}";
