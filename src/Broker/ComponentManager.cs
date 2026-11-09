@@ -52,6 +52,11 @@ public sealed class ComponentManager
   }
   public VaultRegistration[] Vaults() => Directory.EnumerateFiles(Path.Combine(Home, "vaults"), "*.json")
     .Select(Read<VaultRegistration>).ToArray();
+  public VaultRegistration LocateVault(string vaultId)
+  {
+    Protocol.Id(vaultId);
+    return Vaults().SingleOrDefault(item => item.VaultId == vaultId) ?? throw new BrokerException("vault-not-registered");
+  }
   public VaultRegistration Registration(string root)
   {
     var path = LocalFiles.FullPath(root);
@@ -66,7 +71,8 @@ public sealed class ComponentManager
     Protocol.Require(registration.OwnerSid == Platform.Identity.CurrentUserId && manifest.OwnerSid == registration.OwnerSid &&
       manifest.VaultId == registration.VaultId && manifest.LayoutVersion == 1, "vault-identity-mismatch");
   }
-  public async Task<VaultRegistration> RegisterVault(string root)
+  public async Task<VaultRegistration> RegisterVault(string root, bool allowRelocation = true,
+    string? previousRoot = null, string? expectedVaultId = null, string? expectedVersion = null)
   {
     using var held = await WaitLock(Path.Combine(Home, "component.lock"));
     await Recover();
@@ -74,11 +80,37 @@ public sealed class ComponentManager
     var full = LocalFiles.FullPath(root);
     Protocol.Require(!ContainsPath(Home, full) && !ContainsPath(full, Home), "overlapping-service-and-data-paths");
     var existing = Vaults().FirstOrDefault(v => v.Root.Equals(full, Platform.Components.PathComparison));
-    if (existing is not null) { VerifyRegistration(existing); return existing; }
-    using var vault = Vault.Open(full, KeysRoot, true, Platform);
+    if (existing is not null)
+    {
+      VerifyRegistration(existing);
+      Protocol.Require(expectedVaultId is null || existing.VaultId == expectedVaultId, "vault-identity-mismatch");
+      if (expectedVersion is not null)
+      {
+        var database = Path.Combine(full, "control.db");
+        LocalFiles.CheckLinks(database);
+        using var connection = new Microsoft.Data.Sqlite.SqliteConnection(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+        { DataSource = database, Mode = Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+        connection.Open();
+        using var query = connection.CreateCommand();
+        query.CommandText = "SELECT value FROM settings WHERE key='currentVersion'";
+        Protocol.Require(query.ExecuteScalar() as string == expectedVersion, "version-mismatch");
+      }
+      return existing;
+    }
+    if (expectedVaultId is not null)
+    {
+      Platform.Files.ValidatePrivateDirectory(full);
+      Protocol.Require(Read<VaultManifest>(Path.Combine(full, "manifest.json")).VaultId == expectedVaultId, "vault-identity-mismatch");
+    }
+    using var vault = Vault.Open(full, KeysRoot, create: expectedVaultId is null, Platform);
+    Protocol.Require(expectedVaultId is null || vault.Manifest.VaultId == expectedVaultId, "vault-identity-mismatch");
+    Protocol.Require(expectedVersion is null || vault.CurrentVersion().StorageVersion == expectedVersion, "version-mismatch");
     var previous = Vaults().FirstOrDefault(v => v.VaultId == vault.Manifest.VaultId);
+    Protocol.Require(previousRoot is null || previous is not null, "vault-not-registered");
     if (previous is not null)
     {
+      Protocol.Require(allowRelocation && (previousRoot is null ||
+        previous.Root.Equals(LocalFiles.FullPath(previousRoot), Platform.Components.PathComparison)), "vault-location-changed");
       foreach (var directory in new[] { previous.Root, full })
         foreach (var name in new[] { "endpoint.json", "supervisor.json" })
           Protocol.Require(!ProcessAlive(Path.Combine(directory, "runtime", name), Platform), "vault-already-running");
@@ -106,7 +138,7 @@ public sealed class ComponentManager
     bool allowLegacyLifecycle)
   {
     var token = AdminToken(vault.VaultId);
-    try { return await BrokerClient.Connect(vault.VaultId, "management", "controller", token, true, cancellationToken, Platform, allowLegacyLifecycle); }
+    try { return await BrokerClient.Connect(vault.VaultId, "management", Crypto.RandomId(), token, true, cancellationToken, Platform, allowLegacyLifecycle); }
     finally { CryptographicOperations.ZeroMemory(token); }
   }
   private bool ContainsPath(string parent, string child) => LocalFiles.ContainsPath(parent, child, Platform.Components.PathComparison);
@@ -211,7 +243,6 @@ public sealed class ComponentManager
       EnterMaintenance();
       await StopAll();
       Fault?.Invoke("stopped");
-      foreach (var vault in Vaults()) VerifyRegistration(vault);
       LocalFiles.WriteAtomic(RegistryPath, Protocol.Encode(candidate));
       Fault?.Invoke("registered");
       WriteJournal(new(previous, candidate, "committed"));
@@ -374,7 +405,26 @@ public sealed class ComponentManager
   }
   private async Task StopAll()
   {
-    foreach (var vault in Vaults()) { VerifyRegistration(vault); await Stop(vault); }
+    var detached = new List<VaultRegistration>();
+    foreach (var vault in Vaults())
+    {
+      Protocol.Require(vault.OwnerSid == Platform.Identity.CurrentUserId, "vault-identity-mismatch");
+      try { VerifyRegistration(vault); }
+      catch (Exception ex) when (ex is BrokerException { Code: "vault-identity-mismatch" or "directory-not-found" } or FileNotFoundException)
+      {
+        // A moved vault may leave an old registration pointing at an unrelated directory.
+        // Do not create a stop file or acquire data locks at that location.
+        detached.Add(vault);
+        continue;
+      }
+      await Stop(vault);
+    }
+    foreach (var vault in detached)
+    {
+      Protocol.Require(await TryStatus(vault, allowLegacyLifecycle: true) is null, "service-exit-unconfirmed");
+      foreach (var name in new[] { "endpoint.json", "supervisor.json" })
+        Protocol.Require(!ProcessAlive(Path.Combine(vault.Root, "runtime", name), Platform), "service-exit-unconfirmed");
+    }
   }
   public async Task ForceRecover(string root)
   {

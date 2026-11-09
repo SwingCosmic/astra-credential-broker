@@ -42,7 +42,7 @@ function Check([bool]$Condition, [string]$Name) {
 $complete = $false
 try {
   $old = Invoke-Controller $oldController @('install-local', '--home', $serviceHome, '--source', $OldPublish)
-  Check ($old.version -eq '0.1.0') 'installed isolated legacy component'
+  Check ($old.version -in @('0.1.0','0.2.0')) 'installed isolated legacy component'
   $registration = Invoke-Controller $oldController @('register-vault', '--home', $serviceHome, '--vault', $vault)
   $null = Invoke-Controller $oldController @('ensure-running', '--home', $serviceHome, '--vault', $vault)
   $null = Invoke-Controller $oldController @('rpc', '--home', $serviceHome, '--vault', $vault, '--admin', '--response-file', $response) @{
@@ -56,14 +56,14 @@ try {
   $incompatible = Invoke-Controller $newController @('install-status', '--home', $serviceHome)
   Check ($incompatible.installState -eq 'incompatible') 'new controller detects legacy installation without business call'
   $upgraded = Invoke-Controller $newController @('install-local', '--home', $serviceHome, '--source', $Publish)
-  Check ($upgraded.version -eq '0.2.0' -and $upgraded.directory -ne $old.directory) 'new installer drains legacy service and switches component'
+  Check ($upgraded.version -eq '0.3.0' -and $upgraded.directory -ne $old.directory) 'new installer drains legacy service and switches component'
   $null = Invoke-Controller $newController @('ensure-running', '--home', $serviceHome, '--vault', $vault)
   $after = Invoke-Controller $newController @('status', '--home', $serviceHome, '--vault', $vault)
   Check ($after.runtime.serviceStatus -eq 'READY' -and $after.runtime.storageVersion -eq $before.runtime.storageVersion) 'restart retains original vault version and service key'
   $listed = Invoke-Controller $newController @('rpc', '--home', $serviceHome, '--vault', $vault, '--admin') @{ method = 'listCredentials'; params = @{} }
   Check ($listed.items.Count -eq 1 -and $listed.items[0].credentialId -eq 'upgrade-record' -and $listed.items[0].revision -eq '1') 'encrypted credential survives upgrade without new export'
   $current = Invoke-Controller $newController @('component-info')
-  Check ($current.version -eq '0.2.0' -and $current.apiRevision -eq 2 -and $current.protocolVersion -eq 1 -and $current.storageVersion -eq 1) 'published binary exposes expected release and API contract'
+  Check ($current.version -eq '0.3.0' -and $current.apiRevision -eq 3 -and $current.protocolVersion -eq 1 -and $current.storageVersion -eq 1) 'published binary exposes expected release and API contract'
   $complete = $true
 } finally {
   try { $null = Invoke-Controller $newController @('uninstall', '--home', $serviceHome) }

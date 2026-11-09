@@ -8,7 +8,7 @@ public static partial class ComponentContract
 {
   public const string Name = "astra-credential-broker";
   public static readonly string Version = typeof(ComponentContract).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion;
-  public const decimal ApiRevision = 2m;
+  public const decimal ApiRevision = 3m;
   // Keep the lifecycle-only contract stable across later application API/release upgrades.
   public const decimal LifecycleApiRevision = 2m;
   public const int StorageVersion = 1;

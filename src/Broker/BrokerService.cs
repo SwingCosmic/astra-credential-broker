@@ -7,6 +7,7 @@ namespace Astra.Credentials;
 public sealed record ServiceStatus([property: System.Text.Json.Serialization.JsonPropertyName("serviceStatus")] string ServiceStatusValue, string VaultId, string? StorageVersion,
   string Ownership, string Generation, int Sessions, string? ErrorCode);
 public sealed record RegisterClient(string ClientId, string[] Scopes, string[] CredentialIds, bool AllCredentials = false);
+public sealed record UpdateClientGrant(string ClientId, string[] PreviousScopes, string[] Scopes, string[] CredentialIds, bool AllCredentials = false);
 public sealed record RegisteredClient(string ClientId, string AccessToken);
 public sealed record MigrationValidation(string VaultId, string StorageVersion, string AttemptId, string KeyId, int RecordCount);
 public sealed record Session(Actor Actor, long ExpiresAt);
@@ -115,12 +116,13 @@ public sealed class BrokerService : IDisposable
     lock (gate)
     {
       Touch(actor);
-      if (new[] { "status", "getSharingState", "heartbeat", "disconnect", "recoverDelivery", "acknowledgeDelivery", "prepareChallenge", "stop" }.Contains(method, StringComparer.Ordinal))
+      if (new[] { "status", "getSharingState", "getSnapshotWatermark", "heartbeat", "disconnect", "recoverDelivery", "acknowledgeDelivery", "prepareChallenge", "stop" }.Contains(method, StringComparer.Ordinal))
         _ = Protocol.Decode<EmptyParameters>(parameters);
       switch (method)
       {
         case "status": return Status();
         case "getSharingState": return GetSharingState(actor);
+        case "getSnapshotWatermark": return Store.GetSnapshotWatermark(actor);
         case "heartbeat": return new { expiresAt = clock.Now + SessionTtl };
         case "disconnect":
           sessions.Remove(SessionKey(actor));
@@ -147,8 +149,9 @@ public sealed class BrokerService : IDisposable
           var events = Protocol.Decode<EventsRequest>(parameters);
           return Store.Events(actor, events.Cursor, events.Limit);
         case "initialize":
+        case "publish":
           Protocol.Require(!draining, "service-draining");
-          var initialized = vault.Initialize(actor, Protocol.Decode<InitializeRequest>(parameters));
+          var initialized = vault.Initialize(actor, Protocol.Decode<InitializeRequest>(parameters), brokerOwned: method == "publish");
           if (store is null) TryLoad();
           PublishChange();
           return initialized;
@@ -159,6 +162,7 @@ public sealed class BrokerService : IDisposable
         case "prepareClient": return Prepare(actor, Protocol.Decode<ReadyRequest>(parameters));
         case "handoff": return Handoff(actor, Protocol.Decode<HandoffRequest>(parameters));
         case "registerClient": DemandAdmin(actor); return Register(Protocol.Decode<RegisterClient>(parameters));
+        case "updateClientGrant": DemandAdmin(actor); return UpdateGrant(Protocol.Decode<UpdateClientGrant>(parameters));
         case "revokeClient":
           DemandAdmin(actor);
           var clientId = Protocol.Decode<ClientIdRequest>(parameters).ClientId;
@@ -225,18 +229,49 @@ public sealed class BrokerService : IDisposable
   private object GetOperation(Actor actor, OperationRequest request)
   {
     var rows = vault.Control.Rows("SELECT client_id,result FROM receipts WHERE operation_id=$id", r => (r.GetString(0), r.GetString(1)), ("$id", Protocol.Id(request.OperationId)));
-    if (rows.Count == 0) return Store.GetOperation(actor, request.OperationId);
+    if (rows.Count == 0)
+    {
+      Protocol.Require(vault.Setting("currentVersion") is not null, "operation-not-found");
+      return Store.GetOperation(actor, request.OperationId);
+    }
     Protocol.Require(actor.IsAdmin || rows[0].Item1 == actor.ClientId, "forbidden");
     return Protocol.Parse(Encoding.UTF8.GetBytes(rows[0].Item2));
   }
   private static void DemandAdmin(Actor actor) => Protocol.Require(actor.IsAdmin, "management-required");
-  private RegisteredClient Register(RegisterClient request)
+  private static void ValidateGrant(RegisterClient request)
   {
     Protocol.Id(request.ClientId);
     var allowed = new[] { "describe", "read", "create", "update", "events", "initialize", "import", "handoff", "delete" };
     Protocol.Require(request.Scopes.Length > 0 && request.Scopes.All(s => allowed.Contains(s, StringComparer.Ordinal)) &&
       request.Scopes.Distinct(StringComparer.Ordinal).Count() == request.Scopes.Length && request.CredentialIds.Length <= 1000, "invalid-grant");
     foreach (var id in request.CredentialIds) Protocol.Id(id);
+  }
+  private object UpdateGrant(UpdateClientGrant request)
+  {
+    ValidateGrant(new(request.ClientId, request.Scopes, request.CredentialIds, request.AllCredentials));
+    var previous = request.PreviousScopes.ToHashSet(StringComparer.Ordinal);
+    Protocol.Require(previous.Count != 0 && previous.IsSubsetOf(request.Scopes), "invalid-grant");
+    return vault.Control.Atomic(() =>
+    {
+      var grant = Grant(request.ClientId) ?? throw new BrokerException("client-revoked");
+      var marker = "grant-api-3:" + request.ClientId;
+      if (vault.Setting(marker) is not null) return new { updated = false };
+      var updated = grant.AllCredentials == request.AllCredentials &&
+        grant.CredentialIds.ToHashSet(StringComparer.Ordinal).SetEquals(request.CredentialIds) &&
+        previous.SetEquals(grant.Scopes) && !previous.SetEquals(request.Scopes);
+      if (updated)
+      {
+        var next = grant with { Scopes = request.Scopes };
+        vault.Control.Execute("UPDATE clients SET grant_json=$grant WHERE client_id=$id AND revoked=0",
+          ("$grant", JsonSerializer.Serialize(next, Protocol.Json)), ("$id", grant.ClientId));
+      }
+      vault.Set(marker, "1");
+      return new { updated };
+    });
+  }
+  private RegisteredClient Register(RegisterClient request)
+  {
+    ValidateGrant(request);
     // Reissuing credentials requires explicit revocation, never silently rotates an existing stable identity.
     Protocol.Require(vault.Control.Scalar("SELECT client_id FROM clients WHERE client_id=$id", ("$id", request.ClientId)) is null, "client-exists");
     var token = RandomNumberGenerator.GetBytes(32);

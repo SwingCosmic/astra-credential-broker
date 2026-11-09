@@ -7,6 +7,24 @@ namespace Broker.Tests;
 public sealed class StoreTests
 {
   [WindowsFact]
+  public async Task UniqueIdentityIsAtomicAcrossClientsAndReleasedByCommittedDeletion()
+  {
+    using var f = new Fixture(empty: true);
+    var requests = new[] { Fixture.A, Fixture.B }.Select((actor, i) => (actor,
+      request: new CreateCredential("record-" + i, "create-" + i, "opaque", 1, Fixture.Payload("C1"), [], UniqueKey: "_shared-identity"))).ToArray();
+    var results = await Task.WhenAll(requests.Select(pair => Task.Run(() => Record.Exception(() => f.Store.Create(pair.actor, pair.request)))));
+    var winner = Array.FindIndex(results, r => r is null);
+    Assert.InRange(winner, 0, 1);
+    Assert.Equal("credential-identity-exists", Assert.IsType<BrokerException>(results[1 - winner]).Code);
+    var (owner, request) = requests[winner];
+    Assert.Equal(request.CredentialId, f.Store.Create(owner, request).Description.CredentialId);
+    var lease = Fixture.Lease(f.Grant(owner, "delete", request.CredentialId));
+    f.Store.MarkStarted(owner, lease);
+    f.Store.Commit(owner, new(lease, Delete: true));
+    var next = requests[1 - winner];
+    Assert.Equal(next.request.CredentialId, f.Store.Create(next.actor, next.request).Description.CredentialId);
+  }
+  [WindowsFact]
   public void CancelQueuedIsOwnedIdempotentAndCannotReleaseGrantedOrSuccessorLease()
   {
     using var f = new Fixture();

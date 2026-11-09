@@ -42,8 +42,8 @@ public sealed class ApiLevelTests
   [InlineData("99999999999999999999999999.2.3+meta")]
   public void SemVerIsIndependentFromApiCompatibility(string version)
   {
-    ComponentContract.RequireSupported(version, 2.125m);
-    Assert.Equal("api-incompatible", Assert.Throws<BrokerException>(() => ComponentContract.RequireSupported(version, 1.9999999999999999999999999999m)).Code);
+    ComponentContract.RequireSupported(version, 3.125m);
+    Assert.Equal("api-incompatible", Assert.Throws<BrokerException>(() => ComponentContract.RequireSupported(version, 2.9999999999999999999999999999m)).Code);
   }
 
   [Theory]
@@ -51,7 +51,7 @@ public sealed class ApiLevelTests
   [InlineData("01.2.3")]
   [InlineData("1.2.3-01")]
   [InlineData("1.2.3+")]
-  public void SemVerSyntaxRemainsValidated(string version) => Assert.Throws<BrokerException>(() => ComponentContract.RequireSupported(version, 2m));
+  public void SemVerSyntaxRemainsValidated(string version) => Assert.Throws<BrokerException>(() => ComponentContract.RequireSupported(version, 3m));
 
   [Fact]
   public void DecimalAuthUsesRawNumericTokensAndPreservesIntegerProofEncoding()

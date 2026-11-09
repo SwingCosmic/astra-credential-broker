@@ -1,6 +1,6 @@
-# A1/A2 详细设计
+# Broker 架构与存储设计
 
-更新日期：2026-11-01。设计来源：AstraConductor 的 `docs/common/core/credential-sharing/design.md` 与 `implementation-plan.md`。本文描述当前独立仓库中的实现；产品冻结来源更新、记忆客户端主密钥及切换 DI 等职责在 A4—A8 完成。
+组件 0.3.0 实现协议 1、API 3。服务负责共享库、授权和租约。各产品分别持久化本端的绑定、密钥与后端选择。
 
 ## 1. 边界与进程
 
@@ -194,18 +194,13 @@ snapshot 包含同一版本身份、主密钥及初始 `Credential[]` 快照。�
 
 DPAPI 使用 CurrentUser，每个用途的 entropy 包含 broker 格式标识和相应 vault/version/attempt/key 身份。版本 `keyCheck` 以独立 AAD 加密固定检查文本，因此空 vault 也可以可靠拒绝错误主密钥。密钥暂不可用进入 LOCKED，不回落明文。
 
-## 6. 初次发布、交付与移交
+## 6. 发布、交付与本端接入
 
-1. 已登记且拥有 initialize scope 的来源客户端提交 `InitializeRequest`，包括 operationId、不透明 sourceWatermark 和完整初始记录。broker 不推测来源数据库水位。
-2. 为每次候选新建 storageVersion、attemptId、keyId 和密钥，写入新目录；逐条回读密文，校验完整迁移包与主密钥槽。
-3. 在 control.db 单事务发布唯一 currentVersion、来源/水位、`ownership=source` 与无秘密成功回执。发布和更新权移交分开。
-4. 仅初次初始化响应返回迁移密钥。响应丢失时相同 operationId 返回原回执，可由来源在 `acknowledgeDelivery` 前调用 `recoverDelivery` 恢复交付。确认后删除交付槽，普通回执和 getOperation 永不返回迁移密钥。相同成功版本不能由失败重试入口重写。
-5. 接收方离线/后台解密迁移包，完成本地验证与安全缓存。`validateMigration` 可执行服务侧验证并返回无秘密摘要，但不替代产品自己的账号校验。
-6. 每个准备方取得一次性挑战，使用已验证主密钥计算 HMAC 证明，提交 prepareClient。服务保存该客户端对当前版本与来源水位的准备事实。
-7. 来源以 handoff 请求指定至少两个互异、已授权且已准备的客户端，必须包含来源自身；水位必须匹配。broker 回读自己的密钥槽，在 control.db 原子写入 `ownership=broker` 与移交回执。
-8. 交接后应用根据回执启用共享。来源冻结、排空、提交前复查水位、客户端安全缓存确认及迟到响应不回填等产品职责，由 A4—A8 接线实现。
+API 3 的 `publish` 接受具备 initialize 权限的当前客户端提交的操作 ID、来源水位与完整记录。broker 生成独立版本、尝试 ID 与主密钥，验证加密记录、迁移包、版本清单和系统保护钥槽的回读结果，再在 control.db 同一事务提交 currentVersion、来源、水位、`ownership=broker` 和无秘密回执。
 
-成功发布响应丢失不会删除 currentVersion。明确未发布候选失败只清理自身候选目录；进程崩溃遗留的未发布目录不被当成活动版本，可在管理确认后清理。所有重试先查原 operationId；变更请求参数的重放报 operation-conflict。
+调用者按原 operationId 查询或重试；请求摘要或提交者不同会产生冲突。未确认交付的来源可通过 `recoverDelivery` 取回迁移密钥，确认后移除交付槽。各产品用迁移密钥解密版本、保存自己的绑定，再由用户选择启用共享读写。另一端的运行状态、准备与交付确认均无需参与。
+
+旧 API 的 `initialize` 仍发布 `ownership=source` 版本，该路径须按旧协议 prepareClient/handoff 才能切换写入权。升级组件保留已有版本及回执。
 
 ## 7. 更新许可与故障边界
 

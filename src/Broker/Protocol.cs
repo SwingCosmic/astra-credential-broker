@@ -108,11 +108,13 @@ public sealed record CredentialDescription(string CredentialId, string Revision,
   string LastUpdatedByClientId, Dictionary<string, string> Metadata, string ContentType, int PayloadFormatVersion);
 public sealed record Credential(CredentialDescription Description, string Payload);
 public sealed record CreateCredential(string CredentialId, string OperationId, string ContentType,
-  int PayloadFormatVersion, string Payload, Dictionary<string, string> Metadata, string? CoordinationKey = null);
+  int PayloadFormatVersion, string Payload, Dictionary<string, string> Metadata, string? CoordinationKey = null,
+  [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? UniqueKey = null);
 public sealed record ListCredentials(int Limit = 50, string? AfterCredentialId = null,
   string? CreatedByClientId = null, string? LastUpdatedByClientId = null,
   Dictionary<string, string>? MetadataEquals = null);
 public sealed record CredentialPage(CredentialDescription[] Items, string? NextCursor);
+public sealed record SnapshotWatermark(string VaultId, string StorageVersion, string Watermark);
 public sealed record BeginUpdate(string CredentialId, string ObservedRevision, string OperationId);
 public sealed record LeaseRef(string OperationId, string LeaseId, string Fence, string Generation, string BaseRevision);
 public sealed record CommitUpdate(LeaseRef Lease, string? Payload = null, string? ContentType = null,

@@ -12,7 +12,7 @@ public static class ProtocolSchema
       typeof(CreateCredential), typeof(ListCredentials), typeof(Credential), typeof(CredentialPage), typeof(BeginUpdate),
       typeof(BeginResult), typeof(LeaseRef), typeof(CommitUpdate), typeof(AbortUpdate), typeof(Operation), typeof(EventPage),
       typeof(EventsRequest), typeof(WatchEventsRequest), typeof(IdRequest), typeof(OperationRequest), typeof(RegisterClient),
-      typeof(RegisteredClient), typeof(ClientIdRequest), typeof(InitializeRequest), typeof(InitializeResult), typeof(TransferPackage),
+      typeof(RegisteredClient), typeof(UpdateClientGrant), typeof(SnapshotWatermark), typeof(ClientIdRequest), typeof(InitializeRequest), typeof(InitializeResult), typeof(TransferPackage),
       typeof(TransferSnapshot), typeof(VersionManifest), typeof(VaultManifest), typeof(ReadyRequest), typeof(HandoffRequest),
       typeof(ProofChallenge), typeof(UnlockRequest), typeof(ValidateMigration), typeof(MigrationValidation), typeof(PreparedResult), typeof(HandoffResult), typeof(SharingState),
       typeof(ComponentManifest), typeof(ComponentProbe), typeof(Installation), typeof(VaultRegistration), typeof(InstallJournal), typeof(InstallationStatus), typeof(RuntimeEndpoint) };
@@ -40,15 +40,15 @@ public static class ProtocolSchema
     definitions["Empty"] = new JsonObject { ["type"] = "object", ["additionalProperties"] = false };
     var methods = new (string Method, string Parameters)[] {
       ("status", "Empty"), ("getSharingState", "Empty"), ("heartbeat", "Empty"), ("disconnect", "Empty"),
-      ("listCredentials", nameof(ListCredentials)), ("getCredential", nameof(IdRequest)),
+      ("getSnapshotWatermark", "Empty"), ("listCredentials", nameof(ListCredentials)), ("getCredential", nameof(IdRequest)),
       ("createCredential", nameof(CreateCredential)), ("beginUpdate", nameof(BeginUpdate)),
       ("markUpdateStarted", nameof(LeaseRef)), ("renewUpdate", nameof(LeaseRef)), ("commitUpdate", nameof(CommitUpdate)),
       ("abortUpdate", nameof(AbortUpdate)), ("getOperation", nameof(OperationRequest)), ("getEvents", nameof(EventsRequest)),
       ("cancelQueuedUpdate", nameof(OperationRequest)),
-      ("watchEvents", nameof(WatchEventsRequest)), ("initialize", nameof(InitializeRequest)),
+      ("watchEvents", nameof(WatchEventsRequest)), ("initialize", nameof(InitializeRequest)), ("publish", nameof(InitializeRequest)),
       ("recoverDelivery", "Empty"), ("acknowledgeDelivery", "Empty"), ("validateMigration", nameof(ValidateMigration)),
       ("prepareChallenge", "Empty"), ("prepareClient", nameof(ReadyRequest)), ("handoff", nameof(HandoffRequest)),
-      ("registerClient", nameof(RegisterClient)), ("revokeClient", nameof(ClientIdRequest)), ("unlock", nameof(UnlockRequest)), ("stop", "Empty") };
+      ("registerClient", nameof(RegisterClient)), ("updateClientGrant", nameof(UpdateClientGrant)), ("revokeClient", nameof(ClientIdRequest)), ("unlock", nameof(UnlockRequest)), ("stop", "Empty") };
     var requests = new JsonArray();
     foreach (var (method, parameters) in methods)
       requests.Add(new JsonObject

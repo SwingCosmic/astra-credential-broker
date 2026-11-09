@@ -57,6 +57,7 @@ public sealed class CredentialStore : IDisposable
         id TEXT PRIMARY KEY, revision INTEGER NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL,
         group_key TEXT NOT NULL, fence INTEGER NOT NULL DEFAULT 0, sealed TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS groups (group_key TEXT PRIMARY KEY, fence INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS record_unique_keys (unique_key TEXT PRIMARY KEY, credential_id TEXT NOT NULL UNIQUE);
       CREATE TABLE IF NOT EXISTS operations (
         sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
         group_key TEXT NOT NULL, begin_hash TEXT NOT NULL, state TEXT NOT NULL, json TEXT NOT NULL);
@@ -155,6 +156,14 @@ public sealed class CredentialStore : IDisposable
     var body = new RecordBody(request.ContentType, request.PayloadFormatVersion, request.Payload, Protocol.Metadata(request.Metadata));
     ValidateBody(body);
     Protocol.Require(db.Scalar("SELECT id FROM records WHERE id=$id", ("$id", request.CredentialId)) is null, "credential-exists");
+    if (request.UniqueKey is { } uniqueKey)
+    {
+      Protocol.Require(uniqueKey.Length is > 0 and <= 128 &&
+        uniqueKey.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_'), "invalid-unique-key");
+      Protocol.Require(db.Scalar("SELECT credential_id FROM record_unique_keys WHERE unique_key=$key", ("$key", uniqueKey)) is null,
+        "credential-identity-exists");
+      db.Execute("INSERT INTO record_unique_keys VALUES ($key,$id)", ("$key", uniqueKey), ("$id", request.CredentialId));
+    }
     var group = request.CoordinationKey is null ? "record:" + request.CredentialId : "family:" + Protocol.Id(request.CoordinationKey);
     var stored = Encrypt(new(request.CredentialId, 1, actor.ClientId, actor.ClientId, group, 0, "", false), body);
     WriteRecord(stored);
@@ -178,7 +187,7 @@ public sealed class CredentialStore : IDisposable
       return Decode(ReadStored(existing[0].Item3));
     }
     var result = Insert(actor, new(request.CredentialId, request.ContentType, request.PayloadFormatVersion,
-      request.Payload, request.Metadata, request.CoordinationKey));
+      request.Payload, request.Metadata, request.CoordinationKey, request.UniqueKey));
     db.Execute("INSERT INTO mutations VALUES ($id,$client,$hash,'1',$credential)", ("$id", request.OperationId),
       ("$client", actor.ClientId), ("$hash", hash), ("$credential", request.CredentialId));
     Fault?.Invoke("create-before-commit");
@@ -188,6 +197,27 @@ public sealed class CredentialStore : IDisposable
   public Credential Get(Actor actor, string id)
   {
     lock (gate) { actor.Demand("read", id); return Decode(ReadStored(Protocol.Id(id))); }
+  }
+
+  public SnapshotWatermark GetSnapshotWatermark(Actor actor)
+  {
+    lock (gate)
+    {
+      actor.Demand("describe");
+      actor.Demand("read");
+      var rows = db.Rows("SELECT id,revision FROM records WHERE deleted=0 ORDER BY id COLLATE BINARY",
+        row => new { Id = row.GetString(0), Revision = Protocol.Decimal(row.GetInt64(1)) });
+      var digest = Crypto.HashObject(new
+      {
+        version.VaultId,
+        version.StorageVersion,
+        actor.ClientId,
+        actor.AllCredentials,
+        ids = actor.CredentialIds.Order(StringComparer.Ordinal),
+        records = rows.Where(row => actor.CanSee(row.Id))
+      });
+      return new(version.VaultId, version.StorageVersion, digest);
+    }
   }
 
   public CredentialPage List(Actor actor, ListCredentials request)
@@ -375,6 +405,7 @@ public sealed class CredentialStore : IDisposable
     };
     row = Encrypt(row, request.Delete ? new("application/octet-stream", 1, "", []) : body);
     WriteRecord(row);
+    if (request.Delete) db.Execute("DELETE FROM record_unique_keys WHERE credential_id=$id", ("$id", row.Id));
     Fault?.Invoke("record-written");
     Emit(row.Id, row.Revision, request.Delete ? "credentialDeleted" : "credentialChanged");
     op = op with { Status = "committed", ResultRevision = Protocol.Decimal(row.Revision), RequestHash = hash };

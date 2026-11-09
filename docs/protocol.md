@@ -16,12 +16,12 @@ astra-credentials-v1-BASE64URL(SHA256(UTF8(ownerSid + ":" + vaultId)))
 
 三种版本职责分别定义：组件版本是 SemVer 字符串，供更新检查使用，支持 prerelease/build metadata，不参与能否工作的大小或精确匹配判断；协议版本是从 1 起的整数，只决定通信格式能否打通；API 版本（沿用字段名 `apiRevision`）是 decimal 功能级别，通常写整数，类似 API level，实际服务 API 必须满足客户端所需级别。三者独立演进，不要求 API 变化与组件 SemVer 同步递增。
 
-当前未发布组件草稿仍为 `0.2.0`，协议版本为 `1`，API 级别为 `2`，包含 A6—A8 所需 `getSharingState` 和 `cancelQueuedUpdate`。例如较旧组件 `0.1.0-alpha+build` 的 API `2.5` 可以满足所需 API `2`；较新组件 `99.0.0` 的 API `1.9` 仍不满足。组件版本字段的 SemVer 语法和认证完整性仍检查，但不比较它与已安装 release 是否相同。
+组件 `0.3.0` 使用协议 `1` 和 API `3`。双向共享需要 API 3 的 `publish`、`getSnapshotWatermark` 和 `updateClientGrant`。功能兼容按协议及 API 级别判断，组件 SemVer 用于更新检查及握手认证。
 
 现有存储/迁移包格式是独立的数据读写边界，本轮保持 v1，不执行数据迁移，也不把它混入上述三种版本职责。
 
-1. server → client：`Greeting { protocolVersion:1, apiRevision:2, componentVersion:"0.2.0", vaultId, generation, nonce }`，nonce 为随机 32 字节 base64url。
-2. client → server：`Hello { protocolVersion:1, apiRevision:2, clientId, instanceId, clientNonce, proof, management:false }`。clientNonce 同为随机 32 字节。apiRevision 表示本客户端所需 API，服务只要求非负精确 decimal 且 `client.apiRevision <= server.apiRevision`；API 1/1.5 客户端可连接 API 2 服务，所需 2.125 不行。缺字段由严格 DTO 拒绝，不等同于所需 0；不额外设客户端 API 最低下界。
+1. server → client：`Greeting { protocolVersion:1, apiRevision:3, componentVersion:"0.3.0", vaultId, generation, nonce }`，nonce 为随机 32 字节 base64url。
+2. client → server：`Hello { protocolVersion:1, apiRevision:3, clientId, instanceId, clientNonce, proof, management:false }`。clientNonce 同为随机 32 字节。apiRevision 表示本客户端所需 API，服务只要求非负精确 decimal 且 `client.apiRevision <= server.apiRevision`；API 2 客户端可连接 API 3 服务。缺字段由严格 DTO 拒绝，不等同于所需 0；不额外设客户端 API 最低下界。
 3. 双方使用 `verifier = SHA256(accessTokenBytes)`。client proof 为以下数组规范 JSON UTF-8 字节的 HMAC-SHA-256，编码 base64url：
 
 ```text
@@ -99,6 +99,7 @@ Operation 包含 operationId/credentialId/clientId/instanceId/status、leaseId/f
 | `heartbeat` | `{}` | `{ expiresAt }` | 延长本逻辑实例会话 45 秒；不延长记录许可 |
 | `disconnect` | `{}` | `{ disconnected:true }` | 只解绑当前实例，取消其未获准队列；在途许可保留到原 TTL |
 | `listCredentials` | `{ limit?:50, afterCredentialId?, createdByClientId?, lastUpdatedByClientId?, metadataEquals? }` | `{ items:CredentialDescription[], nextCursor }` | describe scope；页大小上限 1—200，达到消息字节预算时提前分页，权限内过滤，多个筛选 AND；nextCursor 用作下一次 afterCredentialId |
+| `getSnapshotWatermark` | `{}` | `{ vaultId, storageVersion, watermark }` | describe + read。摘要绑定当前身份、记录授权范围和所有可见记录的 ID、修订。分页读取完整快照前后核对摘要，空清单同样可核验 |
 | `getCredential` | `{ credentialId }` | Credential | read scope 与该记录授权；读取当前已提交记录 |
 | `createCredential` | `{ credentialId, operationId, contentType, payloadFormatVersion, payload, metadata, coordinationKey? }` | Credential | create+read scope 与记录授权，仅 ownership=broker；归属取认证身份；同 ID 不复活墓碑 |
 | `beginUpdate` | `{ credentialId, observedRevision, operationId }` | `{ status, credential, operation }` | update+read scope；granted 返回许可和当前记录，queued 不返回 payload，stale 返回当前记录；queued 用原请求轮询 |
@@ -121,6 +122,7 @@ failureCode 只接受：network-error、request-timeout、provider-error、parse
 
 | method | params | result | 规则 |
 | --- | --- | --- | --- |
+| `publish` | 同 initialize | 同 initialize | API 3。回读已发布候选数据和服务密钥，原子提交 currentVersion、来源水位、ownership=broker 及幂等回执。来源、接收方可独立接入共享 |
 | `initialize` | `{ operationId, sourceWatermark, records:InitialRecord[] }` | `{ storageVersion, attemptId, keyId, state:"exported", migrationKey }` | initialize scope；单次至多 1000 条且总请求/迁移包受 2 MiB 限制；初次响应含迁移密钥，回执重放的 migrationKey 为 null |
 | `recoverDelivery` | `{}` | `{ migrationKey }` | 仅来源 initialize 身份、且尚未 acknowledgeDelivery；不能从普通回执恢复秘密 |
 | `acknowledgeDelivery` | `{}` | `{ acknowledged:true }` | 来源确认已向用户交付，持久记录后删除服务交付恢复槽 |
@@ -129,7 +131,7 @@ failureCode 只接受：network-error、request-timeout、provider-error、parse
 | `prepareClient` | `{ operationId, sourceWatermark, challengeId, proof }` | `{ storageVersion, state:"prepared" }` | import scope；主密钥 HMAC 证明，成功回执幂等；同挑战不能换 operationId 再使用 |
 | `handoff` | `{ operationId, sourceWatermark, requiredClientIds:string[] }` | `{ storageVersion, ownership:"broker" }` | handoff scope、来源身份、匹配水位、至少两个已准备身份并包含来源；不同于版本发布 |
 
-`InitialRecord = { credentialId, contentType, payloadFormatVersion, payload, metadata, coordinationKey? }`。不接受客户端提供归属字段。
+`InitialRecord = { credentialId, contentType, payloadFormatVersion, payload, metadata, coordinationKey?, uniqueKey? }`。`createCredential` 也接受相同的可选 `uniqueKey`。产品可传稳定账号身份的摘要，最多 128 个 ASCII 字母、数字、点、下划线或连字符。相同键在一个版本的存活记录中唯一，冲突返回 `credential-identity-exists`。删除提交释放该键，可用新记录 ID 重建。未声明此字段的旧记录沿用原有语义。
 
 准备证明为 base64url(HMAC-SHA-256(masterKey, UTF8(JCS(array))))，其中 array 是：
 
@@ -145,6 +147,7 @@ failureCode 只接受：network-error、request-timeout、provider-error、parse
 | method | params | result |
 | --- | --- | --- |
 | `registerClient` | `{ clientId, scopes:string[], credentialIds:string[], allCredentials?:false }` | `{ clientId, accessToken }`，只在显式授权响应返回随机令牌 |
+| `updateClientGrant` | registerClient 参数加 `previousScopes:string[]` | `{ updated:boolean }`。API 3 管理端按旧 scopes 与记录范围精确匹配，单次追加 scopes。保留原令牌。受限或已迁移的登记保持原状，已撤销身份拒绝 |
 | `revokeClient` | `{ clientId }` | `{ revoked:true }`；保留历史身份和归属，移除活跃会话/排队 |
 | `unlock` | `{ masterKey }` | ServiceStatus；masterKey 为 32 字节 base64url，验证后保存服务自己的 DPAPI 槽 |
 | `stop` | `{}` | DRAINING ServiceStatus；禁止新许可，在途排空，最长 30 秒后退出 |

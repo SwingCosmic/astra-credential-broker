@@ -41,7 +41,7 @@ try
     await admin.Call("disconnect", new { });
   }
   for (var i = 0; i < 4; i++) clients.Add(await Connect(i));
-  var exported = Protocol.Decode<InitializeResult>(await clients[0].Call("initialize", new InitializeRequest("export-once", "source-42",
+  var exported = Protocol.Decode<InitializeResult>(await clients[0].Call("publish", new InitializeRequest("export-once", "source-42",
     [new("usage-record", "application/arbitrary", 1, Payload("C1"), new() { ["supportsUsage"] = "true" }),
       new("inference-only-key", "third-party/key", 1, Payload("opaque-key"), new() { ["supportsUsage"] = "false", ["supportsInference"] = "true" })])));
   Check(exported.State == "exported", "initial-export-independent-of-products");
@@ -59,10 +59,10 @@ try
     await clients[i].Call("prepareClient", request);
   }
   await clients[0].Call("acknowledgeDelivery", new { });
-  var handoff = new HandoffRequest("handoff-once", "source-42", grants.Take(2).Select(g => g.ClientId).ToArray());
-  await clients[0].Call("handoff", handoff);
-  await clients[0].Call("handoff", handoff);
-  Check(true, "prepared-handoff-and-idempotent-receipt");
+  var sharing = Protocol.Decode<SharingState>(await clients[1].Call("getSharingState", new { }));
+  var published = Protocol.Decode<InitializeResult>(await clients[0].Call("getOperation", new OperationRequest("export-once")));
+  Check(sharing.Ownership == "broker" && published.StorageVersion == exported.StorageVersion && published.MigrationKey is null,
+    "published-ownership-and-nonsecret-receipt");
   var filtered = Protocol.Decode<CredentialPage>(await clients[2].Call("listCredentials", new ListCredentials(MetadataEquals: new() { ["supportsUsage"] = "true" })));
   Check(filtered.Items.Length == 1 && filtered.Items[0].CredentialId == "usage-record", "metadata-discovery-filter");
   for (var i = 0; i < 2; i++)
@@ -175,6 +175,26 @@ try
     await foreground.WaitForExitAsync();
     Check(foreground.ExitCode == 0, "foreground-graceful-stop");
   }
+  var moved = Path.Combine(root, "moved-vault");
+  Directory.Move(data, moved);
+  try
+  {
+    await manager.RegisterVault(moved, allowRelocation: false, expectedVaultId: vault.VaultId);
+    throw new BrokerException("implicit-relocation-was-accepted");
+  }
+  catch (BrokerException ex) when (ex.Code == "vault-location-changed") { }
+  Check(manager.LocateVault(vault.VaultId).Root == data, "ordinary-client-preserves-registered-location");
+  var relocated = await manager.RegisterVault(moved, previousRoot: data, expectedVaultId: vault.VaultId, expectedVersion: exported.StorageVersion);
+  Check(relocated.Root == moved && manager.LocateVault(vault.VaultId).Root == moved, "explicit-relocation-checks-vault-and-version");
+  Check((await manager.EnsureRunning(moved)).StorageVersion == exported.StorageVersion, "relocated-vault-restarts-at-original-version");
+  // A path reused by a different vault must not receive a stop request for an offline old registration.
+  var stale = vault with { VaultId = Crypto.RandomId(), Root = data };
+  Directory.CreateDirectory(data);
+  File.Copy(Path.Combine(moved, "manifest.json"), Path.Combine(data, "manifest.json"));
+  var staleEntry = Path.Combine(manager.Home, "vaults", stale.VaultId + ".json");
+  LocalFiles.WriteAtomic(staleEntry, Protocol.Encode(stale));
+  await manager.InstallLocal(publish);
+  Check(File.Exists(staleEntry) && !Directory.Exists(Path.Combine(data, "runtime")), "upgrade-preserves-detached-registration-and-reused-directory");
   await manager.Uninstall();
   CryptographicOperations.ZeroMemory(masterKey);
   WriteReport(true, null);

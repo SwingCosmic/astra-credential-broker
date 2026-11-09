@@ -75,6 +75,96 @@ public sealed class VaultServiceTests
     Call(service, actor, "prepareClient", request);
     return request;
   }
+  [WindowsFact]
+  public void PublishRecoversOriginalReceiptAndAllowsRecipientToWriteWhileSourceIsOffline()
+  {
+    var root = BrokerPlatform.Current.Files.CreatePrivateDirectory(Path.Combine(Path.GetTempPath(), "AstraPublish-" + Crypto.RandomId()));
+    try
+    {
+      var data = Path.Combine(root, "data");
+      var keys = Path.Combine(root, "keys");
+      var request = new InitializeRequest("export", "watermark", [new("id", "opaque", 1, Fixture.Payload("C1"), [])]);
+      using (var vault = Vault.Open(data, keys, true))
+      using (var service = new BrokerService(vault))
+      {
+        Register(service, Fixture.A.ClientId);
+        service.Connect(Fixture.A);
+        Assert.Equal("operation-not-found", Assert.Throws<BrokerException>(() =>
+          Call(service, Fixture.A, "getOperation", new OperationRequest("export"))).Code);
+        vault.Fault = point => { if (point == "published") throw new IOException("lost-response"); };
+        Assert.Throws<IOException>(() => Call(service, Fixture.A, "publish", request));
+      }
+      using (var vault = Vault.Open(data, keys))
+      using (var service = new BrokerService(vault))
+      {
+        Register(service, Fixture.B.ClientId);
+        service.Connect(Fixture.B);
+        Assert.Equal("broker", service.Status().Ownership);
+        var before = (SnapshotWatermark)Call(service, Fixture.B, "getSnapshotWatermark", new { });
+        var lease = Fixture.Lease(((BeginResult)Call(service, Fixture.B, "beginUpdate", new BeginUpdate("id", "1", "change"))).Operation!);
+        Call(service, Fixture.B, "markUpdateStarted", lease);
+        Call(service, Fixture.B, "commitUpdate", new CommitUpdate(lease, Fixture.Payload("C2")));
+        Assert.NotEqual(before, (SnapshotWatermark)Call(service, Fixture.B, "getSnapshotWatermark", new { }));
+        Assert.Equal("forbidden", Assert.Throws<BrokerException>(() =>
+          Call(service, Fixture.B, "getOperation", new OperationRequest("export"))).Code);
+        service.Connect(Fixture.A);
+        var receipt = (JsonElement)Call(service, Fixture.A, "getOperation", new OperationRequest("export"));
+        Assert.Null(receipt.GetProperty("migrationKey").GetString());
+        var replay = (InitializeResult)Call(service, Fixture.A, "publish", request);
+        Assert.Equal(before.StorageVersion, replay.StorageVersion);
+        Assert.Null(replay.MigrationKey);
+        Assert.Throws<BrokerException>(() => Call(service, Fixture.A, "initialize", request));
+        Assert.Throws<BrokerException>(() => Call(service, Fixture.A, "publish", request with { SourceWatermark = "new" }));
+        Assert.Equal(Fixture.Payload("C2"), ((Credential)Call(service, Fixture.A, "getCredential", new IdRequest("id"))).Payload);
+        Assert.StartsWith("acm1_", vault.RecoverDelivery(Fixture.A));
+        Assert.Equal("broker", service.Status().Ownership);
+      }
+    }
+    finally { Directory.Delete(root, true); }
+  }
+  [WindowsFact]
+  public void PublishedUniqueKeysUseTheSameIndexAsLaterCreates()
+  {
+    var root = BrokerPlatform.Current.Files.CreatePrivateDirectory(Path.Combine(Path.GetTempPath(), "AstraUniquePublish-" + Crypto.RandomId()));
+    try
+    {
+      using var vault = Vault.Open(Path.Combine(root, "data"), Path.Combine(root, "keys"), true);
+      var record = new InitialRecord("one", "opaque", 1, "", [], UniqueKey: "same-key");
+      var request = new InitializeRequest("export", "watermark", [record, record with { CredentialId = "two" }]);
+      Assert.Equal("credential-identity-exists", Assert.Throws<BrokerException>(() => vault.Initialize(Fixture.A, request, true)).Code);
+      Assert.Null(vault.Setting("currentVersion"));
+      vault.Initialize(Fixture.A, request with { Records = [record] }, true);
+      using var service = new BrokerService(vault);
+      Register(service, Fixture.B.ClientId);
+      service.Connect(Fixture.B);
+      Assert.Equal("credential-identity-exists", Assert.Throws<BrokerException>(() =>
+        Call(service, Fixture.B, "createCredential", new CreateCredential("second", "create", "opaque", 1, "", [], UniqueKey: "same-key"))).Code);
+    }
+    finally { Directory.Delete(root, true); }
+  }
+  [WindowsFact]
+  public void GrantUpgradeMatchesTheExactPriorGrantOnceAndPreservesItsToken()
+  {
+    using var f = new Fixture();
+    f.Store.Dispose();
+    using var service = new BrokerService(f.Vault);
+    service.Connect(Admin);
+    string[] previous = ["describe", "read"];
+    var upgrade = new UpdateClientGrant("old-client", previous, ["read", "describe", "create"], [], true);
+    foreach (var name in new[] { "old-client", "restricted", "revoked" })
+      Call(service, Admin, "registerClient", new RegisterClient(name, previous, name == "restricted" ? ["id"] : [], name != "restricted"));
+    Call(service, Admin, "revokeClient", new ClientIdRequest("revoked"));
+    Assert.Throws<BrokerException>(() => Call(service, Admin, "updateClientGrant", upgrade with { ClientId = "revoked" }));
+    Call(service, Admin, "updateClientGrant", upgrade with { ClientId = "restricted" });
+    Assert.DoesNotContain("create", service.Grant("restricted")!.Scopes);
+    var original = service.Grant("old-client")!;
+    Call(service, Admin, "updateClientGrant", upgrade);
+    var updated = service.Grant("old-client")!;
+    Assert.Equal(original.TokenHash, updated.TokenHash);
+    Assert.Contains("create", updated.Scopes);
+    Call(service, Admin, "updateClientGrant", upgrade with { PreviousScopes = updated.Scopes, Scopes = [.. updated.Scopes, "delete"] });
+    Assert.DoesNotContain("delete", service.Grant("old-client")!.Scopes);
+  }
   [WindowsTheory]
   [InlineData("initial-records-written")]
   [InlineData("migration-written")]

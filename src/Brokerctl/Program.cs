@@ -25,7 +25,8 @@ internal static class Cli
           brokerctl make-manifest --source <complete-publish-directory>
           brokerctl install-local --source <complete-publish-directory> [--home <private-service-home>]
           brokerctl install-status [--home ...]
-          brokerctl register-vault --vault <private-data-directory> [--home ...]
+          brokerctl locate-vault --vault-id <id> [--home ...]
+          brokerctl register-vault --vault <private-data-directory> [--no-relocate | --previous-root <path>] [--vault-id <id>] [--storage-version <id>] [--home ...]
           brokerctl ensure-running|status|stop|restart --vault <directory> [--home ...]
           brokerctl recover --force --vault <directory> [--home ...] (explicitly terminate verified broker processes)
           brokerctl serve --vault <directory> [--home ...]   (foreground debugger entry)
@@ -62,7 +63,13 @@ internal static class Cli
       if (command == "install-local") { Output(await manager.InstallLocal(Required("source"))); return 0; }
       if (command == "install-status") { Output(manager.CheckInstallation()); return 0; }
       if (command == "uninstall") { await manager.Uninstall(); Output(new { uninstalled = true, dataAndKeysRetained = true }); return 0; }
-      if (command == "register-vault") { Output(await manager.RegisterVault(Required("vault"))); return 0; }
+      if (command == "locate-vault") { Output(manager.LocateVault(Required("vault-id"))); return 0; }
+      if (command == "register-vault")
+      {
+        Output(await manager.RegisterVault(Required("vault"), !options.ContainsKey("no-relocate"),
+          options.GetValueOrDefault("previous-root"), options.GetValueOrDefault("vault-id"), options.GetValueOrDefault("storage-version")));
+        return 0;
+      }
       var vault = manager.Registration(Required("vault"));
       switch (command)
       {
@@ -100,7 +107,7 @@ internal static class Cli
           return 0;
         case "rpc":
           var rpc = Protocol.Decode<CliRpc>(await Input());
-          var sensitive = new[] { "initialize", "recoverDelivery", "getCredential", "beginUpdate", "createCredential", "registerClient" }.Contains(rpc.Method, StringComparer.Ordinal);
+          var sensitive = new[] { "initialize", "publish", "recoverDelivery", "getCredential", "beginUpdate", "createCredential", "registerClient" }.Contains(rpc.Method, StringComparer.Ordinal);
           Protocol.Require(!sensitive || options.ContainsKey("response-file"), "secret-response-file-required");
           await using (var client = await RpcClient(manager, vault, options))
           {

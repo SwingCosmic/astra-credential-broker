@@ -9,6 +9,36 @@ namespace Broker.Tests;
 
 public sealed class CompatibilityTests
 {
+  [WindowsFact]
+  public async Task IndependentManagementConnectionsDoNotReleaseAnotherControllersSession()
+  {
+    using var f = new Fixture();
+    f.Store.Dispose();
+    using var service = new BrokerService(f.Vault);
+    using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+    var manager = new ComponentManager(Path.Combine(f.Root, "isolated-home"));
+    var id = f.Vault.Manifest.VaultId;
+    var registration = new VaultRegistration(id, f.Vault.Root, "", f.Vault.Manifest.OwnerSid);
+    var token = RandomNumberGenerator.GetBytes(32);
+    try
+    {
+      LocalFiles.WriteAtomic(manager.AdminPath(id), manager.Platform.Secrets.Protect(token, "management:" + id));
+      var serving = new PipeServer(service, id, SHA256.HashData(token)).Run(stop.Token);
+      try
+      {
+        await using var first = await manager.Management(registration, stop.Token, allowLegacyLifecycle: true);
+        await using var second = await manager.Management(registration, stop.Token, allowLegacyLifecycle: true);
+        await first.Call("status", new { });
+        await second.Call("status", new { });
+        await first.Call("disconnect", new { });
+        var result = Protocol.Decode<ServiceStatus>(await second.Call("status", new { }));
+        Assert.Equal(1, result.Sessions);
+        await second.Call("disconnect", new { });
+      }
+      finally { await stop.CancelAsync(); await serving; }
+    }
+    finally { CryptographicOperations.ZeroMemory(token); }
+  }
   [Fact]
   public void ManifestAndProbeUseOneReleaseIdentityAndRejectMissingApiBeforeExecuting()
   {
@@ -19,7 +49,7 @@ public sealed class CompatibilityTests
       foreach (var file in BrokerPlatform.Current.Components.RequiredFiles) File.WriteAllText(Path.Combine(root, file), "fixture-only");
       var manifest = ComponentManager.MakeManifest(root);
       Assert.Equal(ComponentContract.Version, manifest.Version);
-      Assert.Equal(2, manifest.ApiRevision);
+      Assert.Equal(3, manifest.ApiRevision);
       Assert.Equal(manifest, ComponentManager.VerifyComponent(root) with { Files = manifest.Files });
       var json = JsonNode.Parse(File.ReadAllText(Path.Combine(root, "component.json")))!;
       json.AsObject().Remove("apiRevision");
@@ -36,10 +66,10 @@ public sealed class CompatibilityTests
   [Fact]
   public void ProbeMustMatchManifestVersionApiWireStorageAndSqlite()
   {
-    var manifest = new ComponentManifest(ComponentContract.Name, ComponentContract.Version, "win-x64", 1, 1, 1, 1, [], 2);
-    var probe = new ComponentProbe(ComponentContract.Name, ComponentContract.Version, 1, 1, true, "fixture", 2);
+    var manifest = new ComponentManifest(ComponentContract.Name, ComponentContract.Version, "win-x64", 1, 1, 1, 1, [], 3);
+    var probe = new ComponentProbe(ComponentContract.Name, ComponentContract.Version, 1, 1, true, "fixture", 3);
     ComponentManager.ValidateProbe(manifest, probe);
-    foreach (var different in new[] { probe with { Version = "0.1.0" }, probe with { ApiRevision = 0 }, probe with { ApiRevision = 3 },
+    foreach (var different in new[] { probe with { Version = "0.1.0" }, probe with { ApiRevision = 0 }, probe with { ApiRevision = 4 },
       probe with { Version = "0.2.1" }, probe with { ProtocolVersion = 2 }, probe with { StorageVersion = 2 }, probe with { SqliteReady = false } })
       Assert.Throws<BrokerException>(() => ComponentManager.ValidateProbe(manifest, different));
   }
@@ -61,8 +91,8 @@ public sealed class CompatibilityTests
   }
 
   [WindowsTheory]
-  [InlineData("2.125")]
-  [InlineData("3")]
+  [InlineData("3.125")]
+  [InlineData("4")]
   public async Task ServiceRejectsIncompatibleClientsBeforeCreatingSession(string apiRevision)
   {
     using var f = new Fixture();
@@ -89,6 +119,8 @@ public sealed class CompatibilityTests
   [WindowsTheory]
   [InlineData("1")]
   [InlineData("1.5")]
+  [InlineData("2")]
+  [InlineData("3")]
   public async Task ServiceAcceptsClientsRequiringLowerApiLevels(string requiredApi)
   {
     using var f = new Fixture();
@@ -113,8 +145,8 @@ public sealed class CompatibilityTests
   }
 
   [WindowsTheory]
-  [InlineData("0.1.0", "2")]
-  [InlineData("0.1.0-alpha.1+test.build", "2.125")]
+  [InlineData("0.1.0", "3")]
+  [InlineData("0.1.0-alpha.1+test.build", "3.125")]
   [InlineData("99.0.0+future", "9007199254740993")]
   public async Task ManagementUsesApiLevelAndAcceptsDifferentComponentRelease(string version, string level)
   {
@@ -146,7 +178,7 @@ public sealed class CompatibilityTests
     var accepted = BrokerPlatform.Current.Transport.Accept(PipeProtocol.Name(vaultId), cancel.Token);
     var connecting = BrokerClient.Connect(vaultId, "client", "test", new byte[32], cancellationToken: cancel.Token);
     using var pipe = await accepted;
-    await PipeProtocol.Write(pipe, new Greeting(1, 1.9999999999999999999999999999m, "999.0.0+future", vaultId, "generation", Crypto.B64(new byte[32])), cancel.Token);
+    await PipeProtocol.Write(pipe, new Greeting(1, 2.9999999999999999999999999999m, "999.0.0+future", vaultId, "generation", Crypto.B64(new byte[32])), cancel.Token);
     Assert.Equal("api-incompatible", (await Assert.ThrowsAsync<BrokerException>(() => connecting)).Code);
     Assert.Equal(0, await pipe.ReadAsync(new byte[1], cancel.Token));
   }
@@ -179,10 +211,11 @@ public sealed class CompatibilityTests
         cancellationToken: cancel.Token, allowLegacyLifecycle: lifecycle);
       using var pipe = await accepted;
       // Release text does not decide API compatibility. A lifecycle connection still has a smaller method allowlist.
-      var greeting = new Greeting(1, 2, "0.1.9", vaultId, "generation", Crypto.B64(new byte[32]));
+      var expectedApi = lifecycle ? ComponentContract.LifecycleApiRevision : ComponentContract.ApiRevision;
+      var greeting = new Greeting(1, expectedApi, "0.1.9", vaultId, "generation", Crypto.B64(new byte[32]));
       await PipeProtocol.Write(pipe, greeting, cancel.Token);
       var hello = await PipeProtocol.Read<Hello>(pipe, cancel.Token);
-      Assert.Equal(ComponentContract.LifecycleApiRevision, hello.ApiRevision);
+      Assert.Equal(expectedApi, hello.ApiRevision);
       Assert.Equal(PipeProtocol.Proof(verifier, greeting, hello, "client"), hello.Proof);
       await PipeProtocol.Write(pipe, new Welcome(PipeProtocol.Proof(verifier, greeting, hello, "server")), cancel.Token);
       await using var client = await connecting;

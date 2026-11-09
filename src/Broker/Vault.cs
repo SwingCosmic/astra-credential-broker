@@ -1,13 +1,15 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Astra.Credentials;
 
 public sealed record VaultManifest(int LayoutVersion, string VaultId, string DirectoryIdentity, string OwnerSid);
 public sealed record VersionManifest(int FormatVersion, string VaultId, string StorageVersion, string AttemptId, string KeyId, string MigrationHash, SealedBytes? KeyCheck = null);
 public sealed record InitialRecord(string CredentialId, string ContentType, int PayloadFormatVersion, string Payload,
-  Dictionary<string, string> Metadata, string? CoordinationKey = null);
+  Dictionary<string, string> Metadata, string? CoordinationKey = null,
+  [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? UniqueKey = null);
 public sealed record InitializeRequest(string OperationId, string SourceWatermark, InitialRecord[] Records);
 public sealed record InitializeResult(string StorageVersion, string AttemptId, string KeyId, string State, string? MigrationKey);
 public sealed record ReadyRequest(string OperationId, string SourceWatermark, string ChallengeId, string Proof);
@@ -112,13 +114,14 @@ public sealed class Vault : IDisposable
     finally { CryptographicOperations.ZeroMemory(check); }
   }
 
-  public InitializeResult Initialize(Actor actor, InitializeRequest request)
+  public InitializeResult Initialize(Actor actor, InitializeRequest request, bool brokerOwned = false)
   {
     actor.Demand("initialize");
     Protocol.Id(request.OperationId);
     Protocol.Require(request.SourceWatermark.Length is > 0 and <= 1024 && request.Records.Length <= 1000, "invalid-initialization");
     var hash = Crypto.HashObject(request);
-    var receipt = Receipt<InitializeResult>(request.OperationId, "initialize", actor.ClientId, hash);
+    var kind = brokerOwned ? "publish" : "initialize";
+    var receipt = Receipt<InitializeResult>(request.OperationId, kind, actor.ClientId, hash);
     if (receipt is not null) return receipt;
     Protocol.Require(Setting("currentVersion") is null, "already-published");
     // A unique directory/version is never reused, including after a failed candidate.
@@ -172,8 +175,8 @@ public sealed class Vault : IDisposable
           Set("currentVersion", versionId);
           Set("sourceClientId", actor.ClientId);
           Set("sourceWatermark", request.SourceWatermark);
-          Set("ownership", "source");
-          WriteReceipt(request.OperationId, "initialize", actor.ClientId, hash, result);
+          Set("ownership", brokerOwned ? "broker" : "source");
+          WriteReceipt(request.OperationId, kind, actor.ClientId, hash, result);
           return true;
         });
         published = true;
@@ -189,6 +192,7 @@ public sealed class Vault : IDisposable
         // Only this attempt's unpublished directory is eligible for cleanup.
         Directory.Delete(path, true);
         if (File.Exists(keyPath)) File.Delete(keyPath);
+        File.Delete(Path.Combine(KeysRoot, Manifest.VaultId + ".delivery" + Platform.Secrets.FileExtension));
       }
     }
   }
