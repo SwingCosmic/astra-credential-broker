@@ -1,8 +1,8 @@
 # Astra Credential Broker
 
-Astra Credential Broker 是主要为 [AstraConductor](https://github.com/SwingCosmic/astra-conductor) 提供的独立凭据管理工具。它以本机服务的形式集中保存和共享 API 密钥、访问令牌等认证信息，让多个AI大模型应用工具共用一份凭据，用户无需在每个工具中重复导入和分别维护。
+Astra Credential Broker 是主要为 [AstraConductor](https://github.com/SwingCosmic/astra-conductor) 提供的独立凭据管理工具。它以本机服务的形式集中保存和共享 API 密钥、访问令牌等认证信息，让多个 AI 大模型应用工具共用一份凭据，用户无需在每个工具中重复导入和分别维护。
 
-它可以独立安装、运行和管理，为 `PolyQuota`的订阅用量查询，`Graph Agent`的API接入提供统一的凭据管理能力，也允许其他获得授权的应用通过本地协议接入。
+它可以独立安装、运行和管理，为 `PolyQuota` 的订阅用量查询、`GraphAgent` 的 API 接入提供统一的凭据管理能力，也允许其他获得授权的应用通过本地协议接入。
 
 ## 典型使用场景
 
@@ -76,7 +76,7 @@ dotnet format --verify-no-changes --no-restore
 ./scripts/verify-local.ps1
 ```
 
-本机验收脚本使用发布后的独立组件，检查安装、授权、凭据更新、进程恢复、卸载和重装。所有凭据测试均使用虚构数据，结果及验证范围见[验收记录](docs/validation.md)。
+离线验收脚本使用发布后的独立组件，检查安装、授权、凭据更新、进程恢复、卸载和重装。所有凭据测试均使用虚构数据，结果及验证范围见[验收记录](docs/validation.md)。
 
 当前协议和存储格式均为 v1。跨语言密码格式验证使用 Node.js 标准库，测试向量可通过 `node test/interop/vector.mjs --generate` 重新生成并验证。
 
@@ -97,6 +97,6 @@ dotnet format --verify-no-changes --no-restore
 | `src/Broker/Platform` | 平台能力接口及共享、系统专用实现 |
 | `src/Brokerctl` | 独立 CLI、前台服务与后台监督入口 |
 | `test/Broker.Tests` | 密码、权限、并发、时钟、回执、恢复与管道测试 |
-| `test/Broker.Smoke` | 使用真实发布 EXE 的本机离线安装/运行/恢复验收 |
+| `test/Broker.Smoke` | 使用真实发布 EXE 的离线安装/运行/恢复验收 |
 | `test/interop` | 仅用 Node 标准库验证 HKDF、AES-GCM、JCS 互操作 |
 | `scripts` | 发布与离线验收入口 |

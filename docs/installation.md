@@ -1,6 +1,6 @@
 # Windows 本地安装、发现与恢复
 
-本次只实现 A2 的显式本地复制安装。没有 Release URL、生产下载器、自动下载、系统服务或计划任务依赖。用户已确认采用 **独立隐藏监督进程，默认按需启动**；不要求产品进程常驻。
+本次只实现 A2 的显式本地复制安装。没有 Release URL、生产下载器、自动下载、系统服务或计划任务依赖。安装模式为 **独立隐藏监督进程、按需启动**；产品进程不常驻。
 
 当前完整生产组合和自包含发布架构为 Windows x64；命名管道和组件进程宿主已采用 Windows/Linux/macOS 共享实现，当前缺少的是 Linux/macOS 的用户身份、私有文件系统和密钥保护适配。库、CLI 与状态机使用平台接口；尚未实现的能力在调用时抛出 `PlatformFeatureUnavailableException`。CLI 返回 `platform-feature-unavailable`、具体 feature/platform 和退出码 1，不先做全局 Windows-only 拒绝；help/schema 等中立操作不依赖安装宿主。
 
@@ -76,9 +76,7 @@ recover --force 是用户显式管理动作：可终止已验证 PID、进程创
 
 安装器在组件维护锁内排空已登记服务。旧登记的目录已搬迁或被其他库使用时，须确认旧身份的管理管道与运行标记均离线，随后保留旧登记及目录。新安装成功登记后才移除旧组件目录。卸载暂停同一 home 下全部 vault，设置维护状态，排空/确认退出，移除组件与活动安装登记。保留 vaults 登记、数据、服务密钥、客户端授权和迁移/交接回执。重装复用原服务身份与密钥，客户端原令牌继续有效；无法解锁时进入 LOCKED。
 
-当前安装器可通过固定的生命周期 API 2 排空旧 API 2 服务，也可排空仍在运行且无 API 声明的 0.1.0 产物：仅 TryStatus/Stop 管理路径使用旧握手，连接内白名单只有 status/stop/disconnect，双向共享产品连接要求 API 3。失败回滚可以校验并恢复旧组件原有文件摘要和登记；该旧产物仍因缺失 API 声明而 incompatible，而非因 SemVer 是 0.1.0。升级不转换 storage v1、不重建 vault、不清除主密钥或导入绑定。
-
-新式 Greeting 无需 release 兼容例外：普通管理、产品和生命周期连接都只按协议及所需 API 判断功能兼容。生命周期连接仍限制三项方法，并使用固定生命周期 API 2；SemVer 只检查格式并参与认证，不作版本大小或运行版本一致性门槛。
+当前安装器可通过固定的生命周期 API 2 排空旧 API 2 服务，也可排空仍在运行且无 API 声明的 0.1.0 产物：仅 TryStatus/Stop 管理路径使用旧握手，连接内白名单只有 status/stop/disconnect，双向共享产品连接要求 API 3。失败回滚可以校验并恢复旧组件原有文件摘要和登记；该旧产物仍因缺失 API 声明而 incompatible，而非因 SemVer 是 0.1.0。升级不转换 storage v1、不重建 vault、不清除主密钥或导入绑定。握手与生命周期通道的完整规则见[协议 · 传输、握手与授权](protocol.md#1-传输握手与授权)。
 
 本地失败恢复日志记录 previous/candidate/phase。prepared 阶段发生异常或安装器进程中断，下一次管理命令恢复旧登记、清除未发布候选并退出维护；committed 阶段恢复已完成的新登记。安装器与 vault 数据事务相互独立，任何失败都不删除共享数据。
 
@@ -96,7 +94,7 @@ recover --force 是用户显式管理动作：可终止已验证 PID、进程创
 
 安装、登记、启动和验收路径不下载任何内容，不调用 dotnet/Node/pnpm，不加载产品。root 为独立测试目录，结束后卸载测试组件/停止测试进程，保留虚构凭据、DPAPI 测试材料与无秘密 validation-result.json，便于检查恢复证据。
 
-本次按用户要求直接在本机验收。不存在“已执行干净虚拟机验收”的结论；本机可用 bundled-runtime-and-sqlite 检查确认实际运行的 System.Private.CoreLib 来自复制目录，而非系统预装 runtime。
+自包含验收由 smoke 工具的 bundled-runtime-and-sqlite 检查确认实际加载的 System.Private.CoreLib 来自复制目录，验收不依赖系统预装 .NET。
 
 旧版在线升级的隔离验证入口：
 
@@ -110,14 +108,14 @@ recover --force 是用户显式管理动作：可终止已验证 PID、进程创
 
 ComponentHostProfile 已提供 Linux（包括 musl RID）与 macOS 的 apphost、原生库、默认 home 和路径策略。Unix 组件复制调用 PrepareCopiedFile 保留普通权限并补 apphost owner execute；PID/创建时间与 EXE 路径核验、工具超时、worker 等待和终止逻辑共用。
 
-本仓库 publish/verify-local 脚本和 Smoke 工具目前仍面向 Windows x64 的完整交付验收。共享宿主实现可由 Linux/macOS 工厂选择，不代表这两个系统的完整 broker 已能安装运行：用户身份、私有目录与系统密钥保护仍明确报缺失能力。没有执行 Linux/macOS 实机验收，Unix 文件模式集成测试在 Windows 上明确跳过。
+本仓库 publish/verify-local 脚本和 Smoke 工具目前仍面向 Windows x64 的完整交付验收。Linux/macOS 可选择共享宿主实现，但用户身份、私有目录与系统密钥保护仍报缺失能力；未执行 Linux/macOS 实机验收，Unix 文件模式集成测试在 Windows 上跳过。
 
-## 7. 用户所选目录与手动备份
+## 8. 用户所选目录与手动备份
 
 新建 vault 接受不存在或为空的目录，已有目录的 ACL 和文件属主不作为拒绝条件，不自动收紧用户目录 ACL。broker 检查自己是否能创建、写入、改名、删除和打开所需数据；仅为自己新建的内部目录和文件设置权限，不遍历比较已有 ACL。加密、认证及完整性校验维持不变。
 
 备份或移动应先 stop 并等待完成，再完整复制 vault；服务 home 的系统保护密钥需要保留，跨用户或缺少系统密钥时使用迁移密钥流程。还原不要求保留目录文件系统 ID 或原 ACL。旧 manifest 的 DirectoryIdentity 字段仍可读取，但不再绑定物理目录。使用 `locate-vault --vault-id <id>` 查询已登记目录。普通连接用 `register-vault --no-relocate`。显式搬迁时传 `--previous-root <旧目录> --vault-id <原 vaultId> --storage-version <原版本>`，组件锁内核对后才更新登记。运行中的同一 vault 会拒绝搬迁。只复制 manifest 而缺少 control.db 的不完整备份不能创建空库替代。
 
-## 8. 停止回复与空闲维护
+## 9. 停止回复与空闲维护
 
 停止 RPC 可能与 draining ticker 关闭连接竞争。收到 EOF 或传输超时后，控制器仍须等待旧进程退出并取得 vault.lock 与 supervisor.lock；未确认退出则报告失败，不继续覆盖组件。没有活动/排队操作的空闲轮询与没有本客户端排队票据的管理断开保持只读，避免等待空闲退出时持续追加凭据数据库 WAL。

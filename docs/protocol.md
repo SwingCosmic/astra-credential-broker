@@ -14,7 +14,7 @@ astra-credentials-v1-BASE64URL(SHA256(UTF8(ownerSid + ":" + vaultId)))
 
 一帧为 **4 字节小端有符号长度 + UTF-8 JSON 字节**。长度须为 1 至 2 MiB，最大 JSON 深度 32。拒绝重复属性、未知 DTO 字段、非规范二进制编码及不匹配协议版本。不接受字符串冒充整数或布尔值。
 
-三种版本职责分别定义：组件版本是 SemVer 字符串，供更新检查使用，支持 prerelease/build metadata，不参与能否工作的大小或精确匹配判断；协议版本是从 1 起的整数，只决定通信格式能否打通；API 版本（沿用字段名 `apiRevision`）是 decimal 功能级别，通常写整数，类似 API level，实际服务 API 必须满足客户端所需级别。三者独立演进，不要求 API 变化与组件 SemVer 同步递增。
+三种版本职责分别定义：组件版本是 SemVer 字符串，供更新检查使用，支持 prerelease/build metadata，不参与能否工作的大小或精确匹配判断；协议版本是从 1 起的整数，只决定通信格式能否打通；API 版本（沿用字段名 `apiRevision`）是 decimal 功能级别，通常写整数，类似 API level，实际服务 API 必须满足客户端所需级别。三者独立演进。
 
 组件 `0.3.0` 使用协议 `1` 和 API `3`。双向共享需要 API 3 的 `publish`、`getSnapshotWatermark` 和 `updateClientGrant`。功能兼容按协议及 API 级别判断，组件 SemVer 用于更新检查及握手认证。
 
@@ -32,11 +32,24 @@ astra-credentials-v1-BASE64URL(SHA256(UTF8(ownerSid + ":" + vaultId)))
 
 4. 服务校验授权身份与证明后返回 `Welcome { proof }`，server proof 使用相同数组，仅将 `"client"` 换为 `"server"`。客户端验证后才发送业务秘密。
 
+```mermaid
+sequenceDiagram
+  participant C as 客户端
+  participant S as broker worker
+  S->>C: Greeting（协议版本、API 级别、组件版本、vaultId、generation、nonce）
+  C->>S: Hello（所需 API 级别、clientId、instanceId、clientNonce、proof）
+  Note over C,S: proof = base64url(HMAC-SHA256(SHA256(accessTokenBytes), 规范 JSON 数组))
+  S->>S: 校验授权身份与 client proof
+  S->>C: Welcome（server proof，数组同 client，"client" 换 "server"）
+  C->>C: 验证 server proof
+  Note over C,S: 双向验证完成后才传输业务秘密；握手最长 5 秒
+```
+
 API 字段在线上仍为 JSON number，不接受字符串代替。两个 API 证明位置也仍是 JSON numeric token，专用编码器使用精确规范十进制：`2`、`2.0`、`2e0` 均编码为 `2`，`2.50` 编码为 `2.5`；不经 IEEE-754 浮点，不把数字改为字符串。其余证明元素保持原规范编码；已有整数 API 2 的证明逐字节不变，普通记录和迁移包的 canonical 数字域仍只接受安全整数。
 
 API 数值采用 .NET decimal 的精确非负域：96 位系数不超过 `79228162514264337593543950335`，去除无意义零后的 scale 为 0—28。指数输入可归一化；`9007199254740993` 和 `2.0000000000000000000000000001` 均精确支持。无法精确表示的输入直接拒绝，不舍入为邻近级别；不以 Int32 或 JavaScript 安全整数限制 API。DTO 使用 decimal，schema 为 number；客户端解析原始数字文本后精确比较。
 
-版本字段与客户端 API 声明均纳入双向证明，防止字段篡改；认证组件版本不代表以其大小决定功能兼容。缺失 apiRevision 或 API 不足的服务在业务请求前拒绝，禁止先发 `getSharingState` 再以 method-not-found 推断能力。原无 API 声明的客户端须更新握手。
+版本字段与客户端 API 声明均纳入双向证明，防止字段篡改。缺失 apiRevision 或 API 不足的服务在业务请求前拒绝，禁止先发 `getSharingState` 再以 method-not-found 推断能力。原无 API 声明的客户端须更新握手。
 
 升级控制器仅在显式生命周期管理路径允许旧版管理握手，且连接强制限制为 `status`、`stop`、`disconnect`；不能读取 payload、导出、授权、解锁或执行共享业务。普通客户端不能开启该通道。此通道用于安全排空正在运行的 0.1.0 服务，不放宽新安装/产品连接的兼容与完整性检查。
 

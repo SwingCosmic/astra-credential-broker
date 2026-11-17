@@ -18,7 +18,7 @@ flowchart LR
   C --> P[客户端自行调用供应商]
 ```
 
-OS 用户是本地安全边界。scopes 约束协议客户端，并不把同一 Windows 用户下的恶意进程变成隔离的安全主体：同用户进程若绕过协议直接读取该用户的 DPAPI 材料，仍拥有该用户权限。数据机密性和完整性由加密与认证保证，在线接入由 DPAPI CurrentUser、命名管道身份与协议授权约束；用户目录 ACL 不作为数据安全性的前提。Windows 提权级别也须与管道服务相容；跨提权接入不在本次验证范围。
+OS 用户是本地安全边界。scopes 只约束协议客户端；同用户进程绕过协议直接读取该用户的 DPAPI 材料时，仍拥有该用户权限。数据机密性和完整性由加密与认证保证，在线接入由 DPAPI CurrentUser、命名管道身份与协议授权约束；用户目录 ACL 不作为数据安全性的前提。Windows 提权级别须与管道服务相容，跨提权接入不在本次验证范围。
 
 ## 2. 目录、身份与锁
 
@@ -36,13 +36,13 @@ OS 用户是本地安全边界。scopes 约束协议客户端，并不把同一 
 | `ILocalTransport` | `Accept(address, cancellation)`、`Connect(address, cancellation)` 返回调用方拥有的 `Stream` | `Shared/NamedPipeTransport`，Windows/Linux/macOS 共享的字节模式管道，双端 CurrentUserOnly，取消/失败释放未交付句柄 |
 | `IComponentHost` | RID、默认 home、EXE/必需资产、路径比较/文件名策略、当前进程身份、独立启动、worker/tool 运行、存活检查、核验后终止 | `Shared/ComponentHost`，共用进程管理；ComponentHostProfile 提供三个系统的文件/目录/路径策略，启动处分支 |
 
-`Storage/LocalFiles` 只封装平台中立的路径检查、原子写入和独占打开，不声称建立 OS 权限边界；SQLite 包装器使用这些托管机制。新建内部内容的权限及用户目录的读写探测由 `IPrivateFileSystem` 实现；已有内容不逐项验证 ACL，物理身份不参与 vault 授权。协议编解码、双向 HMAC 认证、请求分发、超时、租约和数据库事务均保留在中立层，不迁入平台适配。
+`Storage/LocalFiles` 封装平台中立的路径检查、原子写入和独占打开；OS 权限边界由 `IPrivateFileSystem` 的平台实现建立，SQLite 包装器使用这些托管机制。新建内部内容的权限及用户目录的读写探测由 `IPrivateFileSystem` 实现；已有内容不逐项验证 ACL，物理身份不参与 vault 授权。协议编解码、双向 HMAC 认证、请求分发、超时、租约和数据库事务均保留在中立层，不迁入平台适配。
 
 ### 共享命名管道传输
 
 NamedPipeServerStream/NamedPipeClientStream 本身支持 Windows 和 Unix，当前适配采用 Byte 模式、异步 IO 和双端 CurrentUserOnly，没有 Windows ACL/PipeAccessRights 重载，因此不带 Windows 标注，也不复制 Linux/macOS 专用实现。Windows 使用系统命名管道；.NET 在 Unix 侧使用 Unix domain socket，CurrentUserOnly 在两端校验有效用户身份。Windows 的该选项还包含提权级别约束，不能将平台安全细节视为完全相同。
 
-Unix 不支持 Message 模式，但本协议自己用 4 字节长度前缀分帧，不依赖该模式。ILocalTransport 保留为传输/协议隔离边界，并不表示每个 OS 都要重写一份传输。工厂在 Windows、Linux、macOS 都选择共享 NamedPipeTransport；其他尚无支持的系统或宿主显式注入的缺失传输仍使用专门的缺失能力错误。Linux/macOS 的用户身份、私有存储和密钥保护适配仍待实现，传输可复用不代表完整服务已交付。
+Unix 不支持 Message 模式，本协议用 4 字节长度前缀自行分帧。ILocalTransport 是传输与协议的隔离边界，各 OS 工厂复用同一份 NamedPipeTransport；其他尚无支持的系统或宿主显式注入的缺失传输使用专门的缺失能力错误。Linux/macOS 的用户身份、私有存储和密钥保护适配仍待实现。
 
 依据：[.NET Unix NamedPipe 服务端实现](https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.IO.Pipes/src/System/IO/Pipes/NamedPipeServerStream.Unix.cs)、[客户端实现](https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.IO.Pipes/src/System/IO/Pipes/NamedPipeClientStream.Unix.cs)与 [PipeOptions 文档](https://learn.microsoft.com/en-us/dotnet/api/system.io.pipes.pipeoptions?view=net-10.0)。
 
@@ -81,7 +81,7 @@ CurrentProcess/IsProcessAlive/TerminateVerified 的 PID 与创建时间约束保
 }
 ```
 
-该示例说明错误结构，不代表已实现 Linux 服务。协议错误仍只返回稳定 error 字符串 `platform-feature-unavailable`，保持 v1 DTO/schema；库调用方可读取异常的 Feature/Platform。缺失实现不会被当成 LOCKED、未安装、安装损坏或网络暂时断开来自动恢复，也不会回退明文密钥、宽权限目录或未认证传输。协议、JCS、迁移包、schema 生成与 CLI help 不需要解析这些能力，因此可以独立使用。Windows x64 的两个发布/验收脚本是特定产物的工作流，脚本入口可以明确拒绝其他宿主；这不影响中立库/CLI 命令。
+该示例使用尚待实现能力的 Linux 平台值。协议错误仍只返回稳定 error 字符串 `platform-feature-unavailable`，保持 v1 DTO/schema；库调用方可读取异常的 Feature/Platform。缺失实现不会被当成 LOCKED、未安装、安装损坏或网络暂时断开来自动恢复，也不会回退明文密钥、宽权限目录或未认证传输。协议、JCS、迁移包、schema 生成与 CLI help 不需要解析这些能力，因此可以独立使用。Windows x64 的两个发布/验收脚本是特定产物的工作流，脚本入口可以明确拒绝其他宿主；这不影响中立库/CLI 命令。
 
 当前工厂只提供 Windows 的完整生产组合；未来平台可逐项实现接口并在工厂组合。接口实现属于可信执行代码，测试替身仅位于 test/，不被当作生产安全实现。`PlatformTests` 使用不同用户身份、不同密钥槽后缀及测试保护器，实际运行初始化、租约提交和重开读取，证明业务层不依赖 SID、DPAPI、管道或组件宿主。
 
@@ -208,6 +208,25 @@ API 3 的 `publish` 接受具备 initialize 权限的当前客户端提交的操
 
 operations 的状态是 `queued → granted → started → committed / failed-released / expired`；队列还可因会话退出或排队超限成为 cancelled，观察修订不一致成为 stale。每个互斥组按入队 sequence 排序；queued 客户端用同一请求轮询，不能越过更早等待者。排队最长 120 秒，弃置等待者不会永久堵队。
 
+```mermaid
+stateDiagram-v2
+  [*] --> queued: beginUpdate 入队
+  queued --> granted: 队首授予许可
+  queued --> stale: 观察修订不一致
+  queued --> cancelled: 会话退出或排队超限
+  granted --> started: markUpdateStarted
+  granted --> expired: 超过期限
+  started --> committed: commitUpdate
+  started --> fr: abortUpdate
+  started --> expired: 超过期限
+  state "failed-released" as fr
+  committed --> [*]
+  fr --> [*]
+  expired --> [*]
+  stale --> [*]
+  cancelled --> [*]
+```
+
 每条记录默认独立互斥，也可在创建时声明 coordinationKey，同一显式族共同排队。服务不解析 payload 推测供应商授权族，coordinationKey 创建后固定。
 
 许可包含 operationId、clientId/instanceId、leaseId、fence、generation、baseRevision、grantedAt/expiresAt/hardDeadline。TTL 为 30 秒，建议每 10 秒续期，总占用最长 120 秒。每次 begin/renew/commit 都在事务内检查期限，清理定时器不是正确性的前提。
@@ -232,4 +251,4 @@ STOPPED/STARTING/FAILED 由控制器与运行登记报告；工作进程报告 L
 
 ### 空闲维护的写入边界（2026-11-05）
 
-服务的 200 ms ticker 在没有 granted/started/queued 操作时，HasPending 仅执行存在性查询，不启动写事务、不更新 clock。断开没有该客户端排队票据的连接也不写入。存在活动操作时继续使用原事务中的过期/fence/时钟水位处理；不是关闭 durable clock 或 SQLite synchronous=FULL。这样服务等待会话超时、空闲退出期间不会仅因轮询不断追加 WAL。回归覆盖无业务空闲检查、管理断开、WAL 大小和 data_version 不变，以及活动租约过期与迟到提交拒绝。
+服务的 200 ms ticker 在没有 granted/started/queued 操作时，HasPending 仅执行存在性查询，不启动写事务、不更新 clock。断开没有该客户端排队票据的连接也不写入。存在活动操作时继续使用原事务中的过期/fence/时钟水位处理；durable clock 与 SQLite synchronous=FULL 保持开启。这样服务等待会话超时、空闲退出期间不会仅因轮询不断追加 WAL。回归覆盖无业务空闲检查、管理断开、WAL 大小和 data_version 不变，以及活动租约过期与迟到提交拒绝。
