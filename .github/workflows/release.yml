@@ -1,0 +1,82 @@
+name: Prepare broker release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    if: github.event_name == 'workflow_dispatch' || !github.event.deleted
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+      - name: Publish self-contained component and smoke tool
+        run: ./scripts/publish.ps1
+      - run: dotnet test --configuration Release --no-restore
+      - name: Package and test the extracted archive
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+        run: |
+          ./scripts/package-release.ps1 -Tag $env:RELEASE_TAG
+          $archive = Get-Item artifacts/release/*.zip
+          $unpacked = Join-Path $env:RUNNER_TEMP 'unpacked-broker'
+          [IO.Compression.ZipFile]::ExtractToDirectory($archive.FullName, $unpacked)
+          ./scripts/verify-local.ps1 -Publish $unpacked -Root (Join-Path $env:RUNNER_TEMP 'broker-smoke')
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: broker-release
+          path: artifacts/release/
+          if-no-files-found: error
+          compression-level: 0
+
+  draft:
+    needs: package
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: broker-release
+          path: dist
+      - name: Sign build provenance for the archive and release manifest
+        id: provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.zip
+            dist/release.json
+          create-storage-record: false
+      - name: Verify provenance and create draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: |
+          cp "$BUNDLE" dist/provenance.json
+          for asset in dist/*.zip dist/release.json; do
+            gh attestation verify "$asset" --bundle dist/provenance.json \
+              --repo "$GITHUB_REPOSITORY" --source-ref "$GITHUB_REF" --source-digest "$GITHUB_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" --deny-self-hosted-runners
+          done
+          version=$(jq -er .version dist/release.json)
+          options=()
+          if [[ "${version%%+*}" == *-* ]]; then options+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" dist/*.zip dist/release.json dist/provenance.json \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --draft --generate-notes \
+            --title "Astra Credential Broker $version" "${options[@]}"

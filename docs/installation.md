@@ -1,6 +1,6 @@
 # Windows 本地安装、发现与恢复
 
-本次只实现 A2 的显式本地复制安装。没有 Release URL、生产下载器、自动下载、系统服务或计划任务依赖。安装模式为 **独立隐藏监督进程、按需启动**；产品进程不常驻。
+控制器从已展开的完整目录安装组件。GitHub Actions 负责生成供下载和验证的发行资产，产品内自动下载仍待接入。安装模式为 **独立隐藏监督进程、按需启动**。
 
 当前完整生产组合和自包含发布架构为 Windows x64；命名管道和组件进程宿主已采用 Windows/Linux/macOS 共享实现，当前缺少的是 Linux/macOS 的用户身份、私有文件系统和密钥保护适配。库、CLI 与状态机使用平台接口；尚未实现的能力在调用时抛出 `PlatformFeatureUnavailableException`。CLI 返回 `platform-feature-unavailable`、具体 feature/platform 和退出码 1，不先做全局 Windows-only 拒绝；help/schema 等中立操作不依赖安装宿主。
 
@@ -17,9 +17,37 @@ dotnet restore --locked-mode
 
 `artifacts/publish/win-x64/` 包含 brokerctl.exe/DLL、deps/runtimeconfig、.NET runtime、hostfxr/hostpolicy/coreclr、SQLite native DLL 与 component.json。SelfContained=true；PublishAot、PublishTrimmed、PublishSingleFile 均为 false。验收工具另发布到 `artifacts/smoke-tools/win-x64/`，不能作为运行服务的依赖。
 
-component.json 包含组件 SemVer、`apiRevision`、RID、协议/数据格式范围及每个文件的相对路径、长度、SHA-256。组件 SemVer 只用于更新检查；协议整数版本只决定通信；API decimal 级别决定关键功能兼容。当前组件为 `0.3.0`、协议为 `1`、API 为 `3`，三者独立演进。release 唯一定义位于 `Directory.Build.props`，manifest、CLI help/component-info 与握手从 InformationalVersion 读取完整 SemVer，保留 prerelease/build metadata。现有数据格式继续保持 v1，本轮不执行存储迁移。
+component.json 包含组件 SemVer、`apiRevision`、RID、协议/数据格式范围及每个文件的相对路径、长度、SHA-256。组件 SemVer 只用于更新检查；协议整数版本只决定通信；API decimal 级别决定关键功能兼容。release 唯一定义位于 `Directory.Build.props`，manifest、CLI help/component-info 与握手从 InformationalVersion 读取完整 SemVer，保留 prerelease/build metadata。现有数据格式继续保持 v1，本轮不执行存储迁移。
 
 来源和复制后的完整性校验通过后，安装器执行候选组件的 component-info，要求 component/version/apiRevision 与 manifest 一致，实际 protocol/storage 落在声明范围且符合当前格式、SQLite 可运行，才进入维护与替换。此处 release 一致性检查证明清单描述的是该候选产物，属于安装完整性，不是 release 功能门槛。缺失/不足 API 在业务操作前报告 incompatible；有效 SemVer 更旧或更高均不影响 API 级别比较。A2 的显式本地来源属于用户选择的开发信任输入；摘要用于完整性检查，不代替后续发行签名与可信下载配置。
+
+### GitHub Release
+
+1. 将工作流合入默认分支后，在 Actions 中手动运行 **Prepare broker release**。它根据 `global.json` 和 NuGet 锁文件构建，运行单元测试，将完整组件打成 ZIP，并从解压副本运行安装和服务验收。成功后可下载名为 `broker-release` 的 Actions artifact。
+2. 准备正式发行时，在对应提交上推送 `v<Version>` 标签，例如 `v0.3.1`。工作流比对标签、项目版本和组件清单，验收通过后用 GitHub Actions 身份为 ZIP 和 `release.json` 生成签名来源证明。发布作业验证证明并用同一份资产创建草稿；预发行版本会勾选 prerelease。
+3. 核对草稿的标签、说明和三个附件，在 GitHub Releases 点击 **Publish release** 后，用户即可按该标签下载。
+
+发行资产包括自包含 ZIP、`release.json` 和 Sigstore 证明包 `provenance.json`。ZIP 根目录直接包含 `brokerctl.exe`、`component.json` 和运行依赖。下载器可先验证发行清单，再读取组件版本、API、协议与存储范围，并按 RID 选择资产。清单的 `assets[].name` 是同一 Release 的附件名，`size` 是 ZIP 字节数，`sha256` 对应整个 ZIP。
+
+例如，在空目录中用 PowerShell 7 下载已发布的标签并验证来源。把 `$tag` 改为目标版本。
+
+```powershell
+$repo = 'SwingCosmic/astra-credential-broker'
+$tag = 'v0.3.1'
+gh release download $tag --repo $repo --pattern '*.zip' --pattern 'release.json' --pattern 'provenance.json'
+if ($LASTEXITCODE -ne 0) { throw 'Download failed' }
+$verify = @('--repo', $repo, '--source-ref', "refs/tags/$tag", '--signer-workflow',
+  "$repo/.github/workflows/release.yml", '--deny-self-hosted-runners', '--bundle', 'provenance.json')
+gh attestation verify release.json @verify
+if ($LASTEXITCODE -ne 0) { throw 'Manifest verification failed' }
+$release = Get-Content -Raw release.json | ConvertFrom-Json
+if ("v$($release.version)" -cne $tag) { throw 'Unexpected release version' }
+$asset = $release.assets | Where-Object rid -eq 'win-x64'
+$zip = Get-Item -LiteralPath $asset.name
+gh attestation verify $zip.FullName @verify
+if ($LASTEXITCODE -ne 0 -or $zip.Length -ne $asset.size -or
+    (Get-FileHash -LiteralPath $zip.FullName).Hash -ne $asset.sha256) { throw 'Archive verification failed' }
+```
 
 ## 2. 安装和登记
 
