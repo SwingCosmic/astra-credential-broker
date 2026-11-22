@@ -23,7 +23,7 @@ component.json 包含组件 SemVer、`apiRevision`、RID、协议/数据格式�
 
 ### GitHub Release
 
-1. 将工作流合入默认分支后，在 Actions 中手动运行 **Prepare broker release**。它根据 `global.json` 和 NuGet 锁文件构建，运行单元测试，将完整组件打成 ZIP，并从解压副本运行安装和服务验收。成功后可下载名为 `broker-release` 的 Actions artifact。
+1. 将工作流合入默认分支后，在 Actions 中手动运行 **Prepare broker release**。它根据 `global.json` 和 NuGet 锁文件构建，运行单元测试，将完整组件打成 ZIP，并从解压副本运行安装和服务验收。成功后可从 Actions 下载 `broker-release-win-x64.zip`，其中包含 Windows x64 自包含包 `astra-credential-broker-<版本>-win-x64.zip` 和发行清单。
 2. 准备正式发行时，在对应提交上推送 `v<Version>` 标签，例如 `v0.3.1`。工作流比对标签、项目版本和组件清单，验收通过后用 GitHub Actions 身份为 ZIP 和 `release.json` 生成签名来源证明。发布作业验证证明并用同一份资产创建草稿；预发行版本会勾选 prerelease。
 3. 核对草稿的标签、说明和三个附件，在 GitHub Releases 点击 **Publish release** 后，用户即可按该标签下载。
 
