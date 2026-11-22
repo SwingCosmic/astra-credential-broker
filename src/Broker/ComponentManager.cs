@@ -19,7 +19,7 @@ public sealed class ComponentCommandException(string executable, int exitCode, s
   public string Diagnostic { get; } = diagnostic;
 }
 
-public sealed class ComponentManager
+public sealed partial class ComponentManager
 {
   public BrokerPlatform Platform { get; }
   public string Home { get; }
@@ -77,6 +77,11 @@ public sealed class ComponentManager
     using var held = await WaitLock(Path.Combine(Home, "component.lock"));
     await Recover();
     _ = ValidateInstallation();
+    return await RegisterLocked(root, allowRelocation, previousRoot, expectedVaultId, expectedVersion);
+  }
+  private async Task<VaultRegistration> RegisterLocked(string root, bool allowRelocation, string? previousRoot = null,
+    string? expectedVaultId = null, string? expectedVersion = null)
+  {
     var full = LocalFiles.FullPath(root);
     Protocol.Require(!ContainsPath(Home, full) && !ContainsPath(full, Home), "overlapping-service-and-data-paths");
     var existing = Vaults().FirstOrDefault(v => v.Root.Equals(full, Platform.Components.PathComparison));

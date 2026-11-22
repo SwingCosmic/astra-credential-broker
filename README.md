@@ -32,7 +32,7 @@ Astra Credential Broker 是主要为 [AstraConductor](https://github.com/SwingCo
 
 当前完整运行和安装验收支持 **Windows x64**。Linux、macOS 已有共享的通信与进程管理实现，用户身份、私有目录权限和系统密钥保护仍待补齐。PolyQuota 和 GraphAgent Electron 已接入本地组件。签名发行和生产下载待 B4。
 
-组件 `0.3.0` 使用协议 `1`、API `3` 和存储格式 v1。任一获准客户端均可发布首个共享版本。发布后 broker 独立解锁，各端分别选择何时接入或退出。升级保留现有 vault、密钥、授权和版本。详细规则见[协议](./docs/protocol.md)与[安装/升级](./docs/installation.md)。
+组件 `0.3.1` 使用协议 `1`、API `3.1` 和存储格式 v1。任一获准客户端均可发布首个共享版本。发布后 broker 独立解锁，各端分别选择何时接入或退出。升级保留现有 vault、密钥、授权和版本。详细规则见[协议](./docs/protocol.md)与[安装/升级](./docs/installation.md)。
 
 ## 从源码试用
 

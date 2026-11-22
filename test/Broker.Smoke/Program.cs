@@ -44,6 +44,11 @@ try
   var exported = Protocol.Decode<InitializeResult>(await clients[0].Call("publish", new InitializeRequest("export-once", "source-42",
     [new("usage-record", "application/arbitrary", 1, Payload("C1"), new() { ["supportsUsage"] = "true" }),
       new("inference-only-key", "third-party/key", 1, Payload("opaque-key"), new() { ["supportsUsage"] = "false", ["supportsInference"] = "true" })])));
+  var replay = await manager.PrepareExport(data, grants[0].ClientId, "export-once", vault.VaultId);
+  Check(replay.VaultId == vault.VaultId, "retry-reuses-published-receipt");
+  await ExpectFailure("export-target-conflict", () => manager.PrepareExport(data, "new-exporter", "new-export", vault.VaultId));
+  await ExpectFailure("vault-in-use", () => manager.ClearExport(data, "new-exporter", "new-export", vault.VaultId));
+  Check((await manager.TryStatus(vault))?.StorageVersion == exported.StorageVersion, "failed-export-and-busy-clear-preserve-vault");
   Check(exported.State == "exported", "initial-export-independent-of-products");
   await Expect("authentication-failed", () => clients[1].Call("validateMigration", new ValidateMigration("acm1_" + Crypto.B64(new byte[32]))));
   var validation = Protocol.Decode<MigrationValidation>(await clients[1].Call("validateMigration", new ValidateMigration(exported.MigrationKey!)));
@@ -195,6 +200,24 @@ try
   LocalFiles.WriteAtomic(staleEntry, Protocol.Encode(stale));
   await manager.InstallLocal(publish);
   Check(File.Exists(staleEntry) && !Directory.Exists(Path.Combine(data, "runtime")), "upgrade-preserves-detached-registration-and-reused-directory");
+  var extra = Path.Combine(moved, "versions", exported.StorageVersion, "keep.txt");
+  File.WriteAllText(extra, "keep");
+  await ExpectFailure("vault-directory-not-empty", () => manager.ClearExport(moved, "new-exporter", "again", vault.VaultId));
+  Check(File.ReadAllText(extra) == "keep", "mixed-vault-preserves-unrelated-files");
+  File.Delete(extra);
+  await manager.EnsureRunning(moved);
+  await manager.ClearExport(moved, "new-exporter", "again", vault.VaultId);
+  Check(!Directory.EnumerateFileSystemEntries(moved).Any() && !File.Exists(manager.AdminPath(vault.VaultId)) &&
+    !manager.Vaults().Any(v => v.VaultId == vault.VaultId), "idle-confirmed-clear-removes-only-selected-vault");
+  var replacement = await manager.PrepareExport(moved, "new-exporter", "again", null);
+  Check(replacement.VaultId != vault.VaultId, "separate-export-after-clear-gets-new-identity");
+  // Simulate a user emptying an offline vault, leaving only its independent broker registration.
+  var savedCopy = Path.Combine(root, "offline-fixture-copy");
+  Directory.Move(moved, savedCopy);
+  Directory.CreateDirectory(moved);
+  var cleared = await manager.PrepareExport(moved, "exporter", "from-empty", null);
+  Check(cleared.RetiredVaultId == replacement.VaultId && cleared.VaultId != replacement.VaultId &&
+    !File.Exists(manager.AdminPath(replacement.VaultId)), "empty-path-retires-stale-registration-and-keys");
   await manager.Uninstall();
   CryptographicOperations.ZeroMemory(masterKey);
   WriteReport(true, null);
@@ -264,6 +287,12 @@ void WriteReport(bool passed, string? error)
   var bytes = Protocol.Encode(report);
   if (root is not null) LocalFiles.WriteAtomic(Path.Combine(root, "validation-result.json"), bytes);
   Console.WriteLine(Encoding.UTF8.GetString(bytes));
+}
+static async Task ExpectFailure(string code, Func<Task> action)
+{
+  try { await action(); }
+  catch (BrokerException ex) when (ex.Code == code) { return; }
+  throw new BrokerException("expected-error-" + code);
 }
 static async Task Expect(string code, Func<Task<JsonElement>> action)
 {

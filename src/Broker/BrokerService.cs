@@ -27,6 +27,7 @@ public sealed class BrokerService : IDisposable
   private readonly Dictionary<string, Session> sessions = new(StringComparer.Ordinal);
   private string? error;
   private bool draining;
+  private int openPipes;
   private long? idleSince;
   private long? drainSince;
   private TaskCompletionSource changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -92,6 +93,14 @@ public sealed class BrokerService : IDisposable
       idleSince = null;
     }
   }
+  public void ConnectPipe(Actor actor)
+  {
+    lock (gate) { Connect(actor); openPipes++; }
+  }
+  public void ClosePipe()
+  {
+    lock (gate) openPipes--;
+  }
   private void Touch(Actor actor)
   {
     var id = SessionKey(actor);
@@ -116,7 +125,7 @@ public sealed class BrokerService : IDisposable
     lock (gate)
     {
       Touch(actor);
-      if (new[] { "status", "getSharingState", "getSnapshotWatermark", "heartbeat", "disconnect", "recoverDelivery", "acknowledgeDelivery", "prepareChallenge", "stop" }.Contains(method, StringComparer.Ordinal))
+      if (new[] { "status", "getSharingState", "getSnapshotWatermark", "heartbeat", "disconnect", "recoverDelivery", "acknowledgeDelivery", "prepareChallenge", "stop", "stopIfUnused" }.Contains(method, StringComparer.Ordinal))
         _ = Protocol.Decode<EmptyParameters>(parameters);
       switch (method)
       {
@@ -181,6 +190,12 @@ public sealed class BrokerService : IDisposable
             return Status();
           }
           finally { CryptographicOperations.ZeroMemory(key); }
+        case "stopIfUnused":
+          DemandAdmin(actor);
+          // Logical sessions survive transport loss for lease recovery. Count authenticated live pipes
+          // independently, including multiple transports using the same client/instance identity.
+          Protocol.Require(openPipes <= 1 && store?.HasPending != true, "vault-in-use");
+          goto case "stop";
         case "stop":
           DemandAdmin(actor);
           draining = true;

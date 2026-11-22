@@ -111,6 +111,7 @@ public sealed class PipeServer(BrokerService service, string vaultId, byte[] adm
     using (pipe)
     using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(stop))
     {
+      var connected = false;
       try
       {
         timeout.CancelAfter(TimeSpan.FromSeconds(5));
@@ -135,7 +136,8 @@ public sealed class PipeServer(BrokerService service, string vaultId, byte[] adm
             new(hello.ClientId, hello.InstanceId, grant!.Scopes, grant.CredentialIds, grant.AllCredentials);
         }
         finally { CryptographicOperations.ZeroMemory(verifier); }
-        service.Connect(actor);
+        service.ConnectPipe(actor);
+        connected = true;
         while (!stop.IsCancellationRequested)
         {
           timeout.CancelAfter(TimeSpan.FromSeconds(50));
@@ -155,6 +157,7 @@ public sealed class PipeServer(BrokerService service, string vaultId, byte[] adm
         }
       }
       catch (Exception ex) when (ex is IOException or OperationCanceledException or BrokerException or JsonException or CryptographicException or FormatException) { }
+      finally { if (connected) service.ClosePipe(); }
     }
   }
   public static string ErrorCode(Exception ex) => ex switch

@@ -16,11 +16,11 @@ astra-credentials-v1-BASE64URL(SHA256(UTF8(ownerSid + ":" + vaultId)))
 
 三种版本职责分别定义：组件版本是 SemVer 字符串，供更新检查使用，支持 prerelease/build metadata，不参与能否工作的大小或精确匹配判断；协议版本是从 1 起的整数，只决定通信格式能否打通；API 版本（沿用字段名 `apiRevision`）是 decimal 功能级别，通常写整数，类似 API level，实际服务 API 必须满足客户端所需级别。三者独立演进。
 
-组件 `0.3.0` 使用协议 `1` 和 API `3`。双向共享需要 API 3 的 `publish`、`getSnapshotWatermark` 和 `updateClientGrant`。功能兼容按协议及 API 级别判断，组件 SemVer 用于更新检查及握手认证。
+组件 `0.3.1` 使用协议 `1` 和 API `3.1`。双向共享需要 API 3 的 `publish`、`getSnapshotWatermark` 和 `updateClientGrant`。功能兼容按协议及 API 级别判断，组件 SemVer 用于更新检查及握手认证。
 
 现有存储/迁移包格式是独立的数据读写边界，本轮保持 v1，不执行数据迁移，也不把它混入上述三种版本职责。
 
-1. server → client：`Greeting { protocolVersion:1, apiRevision:3, componentVersion:"0.3.0", vaultId, generation, nonce }`，nonce 为随机 32 字节 base64url。
+1. server → client：`Greeting { protocolVersion:1, apiRevision:3.1, componentVersion:"0.3.1", vaultId, generation, nonce }`，nonce 为随机 32 字节 base64url。
 2. client → server：`Hello { protocolVersion:1, apiRevision:3, clientId, instanceId, clientNonce, proof, management:false }`。clientNonce 同为随机 32 字节。apiRevision 表示本客户端所需 API，服务只要求非负精确 decimal 且 `client.apiRevision <= server.apiRevision`；API 2 客户端可连接 API 3 服务。缺字段由严格 DTO 拒绝，不等同于所需 0；不额外设客户端 API 最低下界。
 3. 双方使用 `verifier = SHA256(accessTokenBytes)`。client proof 为以下数组规范 JSON UTF-8 字节的 HMAC-SHA-256，编码 base64url：
 
@@ -162,6 +162,7 @@ failureCode 只接受：network-error、request-timeout、provider-error、parse
 | `registerClient` | `{ clientId, scopes:string[], credentialIds:string[], allCredentials?:false }` | `{ clientId, accessToken }`，只在显式授权响应返回随机令牌 |
 | `updateClientGrant` | registerClient 参数加 `previousScopes:string[]` | `{ updated:boolean }`。API 3 管理端按旧 scopes 与记录范围精确匹配，单次追加 scopes。保留原令牌。受限或已迁移的登记保持原状，已撤销身份拒绝 |
 | `revokeClient` | `{ clientId }` | `{ revoked:true }`；保留历史身份和归属，移除活跃会话/排队 |
+| `stopIfUnused` | `{}` | API 3.1。在接入锁内检查其他已认证连接与待处理更新，两者均为空时进入排空状态，否则返回 vault-in-use |
 | `unlock` | `{ masterKey }` | ServiceStatus；masterKey 为 32 字节 base64url，验证后保存服务自己的 DPAPI 槽 |
 | `stop` | `{}` | DRAINING ServiceStatus；禁止新许可，在途排空，最长 30 秒后退出 |
 
@@ -185,6 +186,8 @@ failureCode 只接受：network-error、request-timeout、provider-error、parse
 业务异常只返回稳定分类，不回显异常消息、请求体或供应商错误。操作提交响应丢失先查 getOperation 或重放相同 commit；不能把未知提交结果报成刷新失败并再次使用旧 token。
 
 ## 8. CLI 秘密文件
+
+显式导出使用 `prepare-export`。空路径可清理旧库登记并获得新库身份；正常导出或回执恢复失败时，已发布库返回 `export-target-conflict`。客户端展示目标路径并取得清空确认后，使用原操作、客户端及所见库 ID 调用 `clear-export`。控制器校验目录内容与登记，在排空后取得独占锁再删除库文件。目录清空成功后，客户端重新发起一次导出。
 
 `grant` 从 stdin 读取 RegisterClient，输出令牌只写 `--out` 指定的受控私有目录文件。`rpc` 的 initialize/recoverDelivery/getCredential/beginUpdate/createCredential/registerClient 必须提供 `--response-file`；stdout 仅返回保存位置。文件内容是 DPAPI(CurrentUser) 加密的 JSON，purpose 为 `cli-secret:<vaultId>`。测试/后台可调用相同平台组合的 Secrets.Unprotect 读取，普通设置页不得读取并展示。
 

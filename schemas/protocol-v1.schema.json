@@ -2611,6 +2611,31 @@
           "$ref": "#/$defs/Empty"
         }
       }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protocolVersion",
+        "id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocolVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$"
+        },
+        "method": {
+          "const": "stopIfUnused"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      }
     }
   ]
 }

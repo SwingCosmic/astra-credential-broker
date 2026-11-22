@@ -26,6 +26,8 @@ internal static class Cli
           brokerctl install-local --source <complete-publish-directory> [--home <private-service-home>]
           brokerctl install-status [--home ...]
           brokerctl locate-vault --vault-id <id> [--home ...]
+          brokerctl prepare-export --vault <directory> --client-id <id> --operation <id> [--observed-id <id>] [--home ...]
+          brokerctl clear-export --vault <directory> --client-id <id> --operation <id> --observed-id <id> [--home ...]
           brokerctl register-vault --vault <private-data-directory> [--no-relocate | --previous-root <path>] [--vault-id <id>] [--storage-version <id>] [--home ...]
           brokerctl ensure-running|status|stop|restart --vault <directory> [--home ...]
           brokerctl recover --force --vault <directory> [--home ...] (explicitly terminate verified broker processes)
@@ -64,6 +66,17 @@ internal static class Cli
       if (command == "install-status") { Output(manager.CheckInstallation()); return 0; }
       if (command == "uninstall") { await manager.Uninstall(); Output(new { uninstalled = true, dataAndKeysRetained = true }); return 0; }
       if (command == "locate-vault") { Output(manager.LocateVault(Required("vault-id"))); return 0; }
+      if (command == "clear-export")
+      {
+        await manager.ClearExport(Required("vault"), Required("client-id"), Required("operation"), Required("observed-id"));
+        Output(new { cleared = true });
+        return 0;
+      }
+      if (command == "prepare-export")
+      {
+        Output(await manager.PrepareExport(Required("vault"), Required("client-id"), Required("operation"), options.GetValueOrDefault("observed-id")));
+        return 0;
+      }
       if (command == "register-vault")
       {
         Output(await manager.RegisterVault(Required("vault"), !options.ContainsKey("no-relocate"),
@@ -147,6 +160,7 @@ internal static class Cli
       File.Delete(stopPath);
     }
     using var vault = Vault.Open(registration.Root, manager.KeysRoot, platform: manager.Platform);
+    Protocol.Require(vault.Manifest.VaultId == registration.VaultId, "vault-identity-mismatch");
     using var service = new BrokerService(vault);
     var adminToken = manager.AdminToken(registration.VaultId);
     var verifier = SHA256.HashData(adminToken);

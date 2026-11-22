@@ -49,7 +49,7 @@ public sealed class CompatibilityTests
       foreach (var file in BrokerPlatform.Current.Components.RequiredFiles) File.WriteAllText(Path.Combine(root, file), "fixture-only");
       var manifest = ComponentManager.MakeManifest(root);
       Assert.Equal(ComponentContract.Version, manifest.Version);
-      Assert.Equal(3, manifest.ApiRevision);
+      Assert.Equal(ComponentContract.ApiRevision, manifest.ApiRevision);
       Assert.Equal(manifest, ComponentManager.VerifyComponent(root) with { Files = manifest.Files });
       var json = JsonNode.Parse(File.ReadAllText(Path.Combine(root, "component.json")))!;
       json.AsObject().Remove("apiRevision");
@@ -66,8 +66,8 @@ public sealed class CompatibilityTests
   [Fact]
   public void ProbeMustMatchManifestVersionApiWireStorageAndSqlite()
   {
-    var manifest = new ComponentManifest(ComponentContract.Name, ComponentContract.Version, "win-x64", 1, 1, 1, 1, [], 3);
-    var probe = new ComponentProbe(ComponentContract.Name, ComponentContract.Version, 1, 1, true, "fixture", 3);
+    var manifest = new ComponentManifest(ComponentContract.Name, ComponentContract.Version, "win-x64", 1, 1, 1, 1, [], ComponentContract.ApiRevision);
+    var probe = new ComponentProbe(ComponentContract.Name, ComponentContract.Version, 1, 1, true, "fixture", ComponentContract.ApiRevision);
     ComponentManager.ValidateProbe(manifest, probe);
     foreach (var different in new[] { probe with { Version = "0.1.0" }, probe with { ApiRevision = 0 }, probe with { ApiRevision = 4 },
       probe with { Version = "0.2.1" }, probe with { ProtocolVersion = 2 }, probe with { StorageVersion = 2 }, probe with { SqliteReady = false } })
@@ -145,7 +145,7 @@ public sealed class CompatibilityTests
   }
 
   [WindowsTheory]
-  [InlineData("0.1.0", "3")]
+  [InlineData("0.1.0", "3.1")]
   [InlineData("0.1.0-alpha.1+test.build", "3.125")]
   [InlineData("99.0.0+future", "9007199254740993")]
   public async Task ManagementUsesApiLevelAndAcceptsDifferentComponentRelease(string version, string level)

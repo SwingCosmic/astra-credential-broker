@@ -48,7 +48,7 @@ public static class ProtocolSchema
       ("watchEvents", nameof(WatchEventsRequest)), ("initialize", nameof(InitializeRequest)), ("publish", nameof(InitializeRequest)),
       ("recoverDelivery", "Empty"), ("acknowledgeDelivery", "Empty"), ("validateMigration", nameof(ValidateMigration)),
       ("prepareChallenge", "Empty"), ("prepareClient", nameof(ReadyRequest)), ("handoff", nameof(HandoffRequest)),
-      ("registerClient", nameof(RegisterClient)), ("updateClientGrant", nameof(UpdateClientGrant)), ("revokeClient", nameof(ClientIdRequest)), ("unlock", nameof(UnlockRequest)), ("stop", "Empty") };
+      ("registerClient", nameof(RegisterClient)), ("updateClientGrant", nameof(UpdateClientGrant)), ("revokeClient", nameof(ClientIdRequest)), ("unlock", nameof(UnlockRequest)), ("stop", "Empty"), ("stopIfUnused", "Empty") };
     var requests = new JsonArray();
     foreach (var (method, parameters) in methods)
       requests.Add(new JsonObject
